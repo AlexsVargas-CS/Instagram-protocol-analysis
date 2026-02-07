@@ -10,12 +10,12 @@ export interface Message{
 }
 
 export interface Thread {
-	threadId: string;
+	thread_Id: string;
 	users: User[];
 	lastMessage: Message;
 	unreadCount: number;
 	lastActivityAt: number;
-	isGroup: boolean;
+	is_group: boolean;
 }
 
 
@@ -26,4 +26,3 @@ export interface Thread {
 	items:DirectInboxFeedResponseItemsItem[];
 	last_permanent_item: DirectInboxFeedResponseLastPermanentItem;
 	last_activity_at: string;*/
-

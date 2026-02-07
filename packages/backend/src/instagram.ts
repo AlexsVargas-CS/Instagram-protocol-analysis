@@ -75,12 +75,12 @@ export class InstagramClient {
 	private mapThread(raw:unknown): Thread{
 		const r = raw as Record<string, unknown>;
 		return{
-			threadId: String(r.threadId, ?? ''),
+			thread_Id : String(r.thread_Id ?? ''),
 			users: [],
 			lastMessage: {text: '', timestamp: 0},
 			unreadCount: 0,
 			lastActivityAt: 0,
-			isGroup: Boolean(r.isGroup ?? false),
+			is_group: Boolean(r.is_group ?? false),
 		};
 	}
 	
