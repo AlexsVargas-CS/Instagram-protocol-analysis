@@ -12,16 +12,12 @@ export class InstagramClient {
 	}
 	
 	async login(username:string, password: string): Promise<User> {
-		
-	
 		this.ig.state.generateDevice(username); 
-		
 		await.this.ig.simulate.preLoginFlow();
-		
 		
 		const loggedInUser = await this.ig.account.login(username, password); //login fails catch will be added later...
 		
-		await this.saveSession(); //IG call expensive so save good 
+		await this.saveSession(); //creating multiple sessions can raise sus!
 		
 		return this.mapUser(loggedInUser);
 	}
@@ -39,6 +35,12 @@ export class InstagramClient {
 		}catch {
 			return false;
 		}
+	}
+	
+	private async SaveSession(): Promise<void> {
+		cosnt session = await this.ig.state.serialize()// extracts libs full state
+		delete session.constants;
+		await fs.writeFile(this.sessionPath, JSON.stringify(session));
 		
 	}
 	
