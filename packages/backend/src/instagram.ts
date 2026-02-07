@@ -44,6 +44,56 @@ export class InstagramClient {
 		
 	}
 	
+	async getMessages(threadId: string, _cursor?: string): Promise<Message[]> {
+		throw new Error(`getMessages not yet implemented for thread ${threadId}`)
+	}
+	
+	async sendMessage(threadId: string, _text: string): Promise<Message> {
+    // TODO: Implement in Phase 5
+    throw new Error(`sendMessage not yet implemented for thread ${threadId}`);
+	}
+
+	// basically our types differ from the library we are using 
+	// thus we must map our types to only include what we want from the library
+	//Want to use my own types isntead of libraries maps 
+	
+	
+	
+	//Here we call the API and it returns its own response object (full structure)
+	//So our mapper just take the full struct and we take the parts we need from it 
+	// and create our own types
+	
+	private mapUser(raw: unkown): User {
+		const r = raw as Record<string, unkown>;
+		return {
+			pk: String(r.pk ?? ''),
+			username: String(r.username ?? ''),
+			
+		};
+	}
+
+	private mapThread(raw:uknown): Thread{
+		const r = raw as Record<string, unkown>;
+		return{
+			threadId: String(r.threadId, ?? ''),
+			users: [],
+			lastMessage: {text: '', timestamp: 0},
+			unreadCount: 0,
+			lastActivity: 0,
+			isGroup: Boolean(r.isGroup ?? false),
+		};
+	}
+	
+	
+	async getThreads(): Promise<Thread[]> {
+		const feed = await this.ig.feed.directInbox();
+		raw_Thread = await feeds.item();
+		
+		return raw_Thread.map((thread) => this.mapThread(thread)); 
+		
+		
+	}
+	
 	
 	
 
