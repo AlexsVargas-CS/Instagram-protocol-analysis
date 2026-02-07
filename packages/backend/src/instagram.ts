@@ -25,7 +25,7 @@ export class InstagramClient {
 	async loadSession(): Promise<boolean> {//session is either restored or not.
 		//get the session/ read it, feed saved state back into the library's internal state machine, call user to make sure session hasnt expired.
 		try {
-			data = await fs.readFile(this.sessionPath, 'utf-8'); //get session and store
+			const data = await fs.readFile(this.sessionPath, 'utf-8'); //get session and store
 			const stateObject = JSON.parse(data);
 			await this.ig.state.deserialize(stateObject); //restores session state from a saved JSON string 
 			
@@ -37,7 +37,7 @@ export class InstagramClient {
 		}
 	}
 	
-	private async SaveSession(): Promise<void> {
+	private async saveSession(): Promise<void> {
 		const session = await this.ig.state.serialize()// extracts libs full state
 		delete session.constants;
 		await fs.writeFile(this.sessionPath, JSON.stringify(session));
@@ -85,9 +85,9 @@ export class InstagramClient {
 	}
 	
 	
-	async getThreads(): Promise<Thread[]> {
+	private async getThreads(): Promise<Thread[]> {
 		const feed = await this.ig.feed.directInbox();
-		raw_Thread = await feeds.item();
+		const raw_Thread = await feed.items();
 		
 		return raw_Thread.map((thread) => this.mapThread(thread)); 
 		
