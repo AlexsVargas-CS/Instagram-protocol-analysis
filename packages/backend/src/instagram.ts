@@ -13,7 +13,7 @@ export class InstagramClient {
 	
 	async login(username:string, password: string): Promise<User> {
 		this.ig.state.generateDevice(username); 
-		await.this.ig.simulate.preLoginFlow();
+		await this.ig.simulate.preLoginFlow();
 		
 		const loggedInUser = await this.ig.account.login(username, password); //login fails catch will be added later...
 		
@@ -38,7 +38,7 @@ export class InstagramClient {
 	}
 	
 	private async SaveSession(): Promise<void> {
-		cosnt session = await this.ig.state.serialize()// extracts libs full state
+		const session = await this.ig.state.serialize()// extracts libs full state
 		delete session.constants;
 		await fs.writeFile(this.sessionPath, JSON.stringify(session));
 		
@@ -63,8 +63,8 @@ export class InstagramClient {
 	//So our mapper just take the full struct and we take the parts we need from it 
 	// and create our own types
 	
-	private mapUser(raw: unkown): User {
-		const r = raw as Record<string, unkown>;
+	private mapUser(raw: unknown): User {
+		const r = raw as Record<string, unknown>;
 		return {
 			pk: String(r.pk ?? ''),
 			username: String(r.username ?? ''),
@@ -72,14 +72,14 @@ export class InstagramClient {
 		};
 	}
 
-	private mapThread(raw:uknown): Thread{
-		const r = raw as Record<string, unkown>;
+	private mapThread(raw:unknown): Thread{
+		const r = raw as Record<string, unknown>;
 		return{
 			threadId: String(r.threadId, ?? ''),
 			users: [],
 			lastMessage: {text: '', timestamp: 0},
 			unreadCount: 0,
-			lastActivity: 0,
+			lastActivityAt: 0,
 			isGroup: Boolean(r.isGroup ?? false),
 		};
 	}
