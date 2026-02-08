@@ -44,10 +44,33 @@ export class InstagramClient {
 		
 	}
 	
-	async getMessages(threadId: string, _cursor?: string): Promise<Message[]> {
-		throw new Error(`getMessages not yet implemented for thread ${threadId}`)
+	private mapMessage(raw: unknown): Message{
+		const r = raw as Record<string, unknown>;
+		
+		return {
+			text: String(r.text ?? ''),
+			timestamp: 0,
+		};
 	}
 	
+	async getMessages(threadId: string, _cursor?: string): Promise<Message[]> {
+		const feed = await this.ig.feed.directThread({thread_id: threadId});
+		const threads = await feed.items(); // this should return a array that contains the threads info
+		//with this raw thread we can now extract last_permanent_item
+		
+		//we then return a threads then map it using thread.last_perm after 
+		//we filter by checking that the item is not empty and finally map it to mapMessage
+		
+		return threads
+		.map(thread => thread.last_permanent_item)
+		.filter(item => item != null)
+		.map((item) => this.mapMessage(item));
+	
+		
+		//throw new Error(`getMessages not yet implemented for thread ${threadId}`)
+	}
+	
+
 	async sendMessage(threadId: string, _text: string): Promise<Message> {
     // TODO: Implement in Phase 5
     throw new Error(`sendMessage not yet implemented for thread ${threadId}`);
@@ -74,25 +97,32 @@ export class InstagramClient {
 
 	private mapThread(raw:unknown): Thread{
 		const r = raw as Record<string, unknown>;
+		const raw_user = r.users;
+		const raw_last_perm_item = r.last_permanent_item;
+		
+		const users = Array.isArray(raw_user) ? raw_user.map((field) => this.mapUser(field)) : []; // check if users array exists, then map else empty arr
+		const last_perm_item = raw_last_perm_item ? this.mapMessage(raw_last_perm_item) : {text: '', timestamp: 0} ; 
+	
+		
 		return{
-			thread_Id : String(r.thread_Id ?? ''),
-			users: [],
-			lastMessage: {text: '', timestamp: 0},
+			thread_id : String(r.thread_id ?? ''),
+			users: users,
+			lastMessage : last_perm_item,
 			unreadCount: 0,
 			lastActivityAt: 0,
 			is_group: Boolean(r.is_group ?? false),
 		};
+		
+	
 	}
 	
 	
-	private async getThreads(): Promise<Thread[]> {
+	async getThreads(): Promise<Thread[]> {
 		const feed = await this.ig.feed.directInbox();
 		const raw_Thread = await feed.items();
-		
 		return raw_Thread.map((thread) => this.mapThread(thread)); 
-		
-		
 	}
+	
 	
 	
 	
