@@ -1,8 +1,8 @@
 # Instagram CLI TUI - Development Progress
 
-**Last Updated:** 2026-02-08
+**Last Updated:** 2026-02-09
 **Current Phase:** Phase 1 - Backend Service Setup
-**Current Step:** Step 2 - Finishing instagram.ts (error handling remaining)
+**Current Step:** Step 3 - server.ts (ready to start)
 
 ---
 
@@ -51,7 +51,7 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
   - `DirectInboxFeedResponseUsersItem` (for users)
   - Fields identified: thread_id, users, last_permanent_item, is_group, last_activity_at
 
-#### Step 2: instagram.ts (Sessions 3 - 2026-02-08)
+#### Step 2: instagram.ts (Sessions 3-4, 2026-02-08 to 2026-02-09)
 - [x] Create `InstagramClient` class
 - [x] Implement `login()` with username/password
 - [x] Implement `saveSession()` to persist auth state
@@ -59,17 +59,11 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
 - [x] Implement `getThreads()` to fetch conversation list
 - [x] Map Instagram API responses to defined types (mapUser, mapThread, mapMessage)
 - [x] Export the client class
+- [x] Handle API errors gracefully (custom error hierarchy + try/catch on all methods)
 
 ### 🔄 In Progress
 
-#### Step 2: instagram.ts - Remaining
-- [ ] Handle API errors gracefully
-
-**Next Immediate Action:** Add error handling to InstagramClient methods, then start Step 3 (server.ts)
-
-### 📋 Pending Tasks
-
-#### Step 3: server.ts (After Step 2)
+#### Step 3: server.ts
 - [ ] Set up readline to read from stdin
 - [ ] Parse incoming JSON and validate structure
 - [ ] Route methods to InstagramClient
@@ -78,6 +72,10 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
 - [ ] Handle unknown methods
 - [ ] Handle Instagram API errors
 - [ ] Attempt session restoration on startup
+
+**Next Immediate Action:** Start Step 3 — build the stdin JSON-RPC server (server.ts)
+
+### 📋 Pending Tasks
 
 #### Future Phases
 - Phase 2: Go TUI Setup (Week 2)
@@ -102,7 +100,11 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
    - Rationale: Maintainability, testability, decoupling
    - Trade-off: More initial code, but better long-term
 
-4. **MQTT for real-time messaging** (vs. REST polling)
+4. **Custom error class hierarchy** (vs. generic Error or library errors)
+   - Rationale: Structured error handling lets server.ts map errors to JSON-RPC error codes cleanly
+   - Base `InstagramClientError` → `AuthenticationError` (with reason codes), `SessionError`, `InstagramAPIError` (with optional statusCode)
+
+5. **MQTT for real-time messaging** (vs. REST polling)
    - Rationale: Less detectable, mimics real Instagram app behavior
    - Already proven in research phase
 
@@ -167,6 +169,22 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
 ---
 
 ## Session Log
+
+### Session 4: 2026-02-09 (Error Handling & Custom Error Class Hierarchy)
+**Focus:** Adding structured error handling to InstagramClient with a custom error class hierarchy
+
+**Accomplishments:**
+- Created custom error class hierarchy in types.ts: `InstagramClientError` (base) extending `Error`, with `AuthenticationError`, `SessionError`, and `InstagramAPIError` as subclasses
+- Added error handling to `login()` — catches `IgLoginBadPasswordError`, `IgCheckpointError`, `IgLoginTwoFactorRequiredError`
+- Added error handling to `getMessages()` — catches `IgLoginRequiredError` for expired sessions
+- Added error handling to `getThreads()` — catches `IgLoginRequiredError` for expired sessions
+- Iterative code review catching bugs: `AuthenticationError` extending wrong class, `=` vs `:` for type annotation, typo in class name string
+
+**Decisions Made:**
+- Error class hierarchy design: base `InstagramClientError` with `AuthenticationError` (with reason codes), `SessionError`, and `InstagramAPIError` (with optional statusCode) as subclasses
+
+**Next Session Goals:**
+- Start Step 3: server.ts (stdin readline, JSON-RPC parsing, method routing)
 
 ### Session 3: 2026-02-08 (InstagramClient Implementation & Mapper Functions)
 **Focus:** Implementing the InstagramClient class methods and mapper functions with iterative code review
