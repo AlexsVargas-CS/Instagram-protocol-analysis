@@ -1,5 +1,5 @@
-import { IgApiClient, IgLoginBadPasswordError, IgCheckpointError, IgLoginTwoFactorRequiredError } from 'instagram-private-api';
-import { User, Thread, Message, AuthenticationError, InstagramAPIError } from './types';
+import { IgApiClient, IgLoginBadPasswordError, IgCheckpointError, IgLoginTwoFactorRequiredError, IgLoginRequiredError } from 'instagram-private-api';
+import { User, Thread, Message, AuthenticationError, SessionError, InstagramAPIError } from './types';
 import * as fs from 'fs/promises';
 
 export class InstagramClient {
@@ -85,20 +85,33 @@ export class InstagramClient {
 	}
 	
 	async getMessages(threadId: string, _cursor?: string): Promise<Message[]> {
-		const feed = await this.ig.feed.directThread({thread_id: threadId});
-		const threads = await feed.items(); // this should return a array that contains the threads info
+		try {
+			const feed = await this.ig.feed.directThread({thread_id: threadId});
+			const threads = await feed.items(); // this should return a array that contains the threads info
 		//with this raw thread we can now extract last_permanent_item
 		
 		//we then return a threads then map it using thread.last_perm after 
 		//we filter by checking that the item is not empty and finally map it to mapMessage
 		
-		return threads
-		.map(thread => thread.last_permanent_item)
-		.filter(item => item != null)
-		.map((item) => this.mapMessage(item));
+			return threads
+			.map(thread => thread.last_permanent_item)
+			.filter(item => item != null)
+			.map((item) => this.mapMessage(item));
 	
-		
 		//throw new Error(`getMessages not yet implemented for thread ${threadId}`)
+		}catch (error) {
+			if (error instanceof IgLoginRequiredError) {
+				throw new SessionError('Session expired: please log in again');
+			} else{
+				throw new InstagramAPIError(
+					error instanceof Error ? error.message : `Failed to fetch messages for thread ${threadId}`,
+				);
+			}
+		}
+		
+
+		
+		
 	}
 	
 
@@ -149,9 +162,23 @@ export class InstagramClient {
 	
 	
 	async getThreads(): Promise<Thread[]> {
-		const feed = await this.ig.feed.directInbox();
-		const raw_Thread = await feed.items();
-		return raw_Thread.map((thread) => this.mapThread(thread)); 
+		try{
+			const feed = await this.ig.feed.directInbox();
+			const raw_Thread = await feed.items();
+			return raw_Thread.map((thread) => this.mapThread(thread)); 
+		} catch (error) {
+			if (error instanceof IgLoginRequiredError) {
+				throw new SessionError('Session expired — please log in again');
+			} 
+			else{
+				throw new InstagramAPIError(
+					error instanceof Error ? error.message : 'Failed to fetch threads',
+				);
+			}
+		} 
+		
+		
+		
 	}
 	
 	

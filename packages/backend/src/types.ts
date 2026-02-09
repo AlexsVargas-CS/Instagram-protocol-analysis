@@ -1,7 +1,7 @@
 export class InstagramClientError extends Error {
 	constructor(message: string){
 		super(message);
-		this.name = 'InsatgramClientError';
+		this.name = 'InstagramClientError';
 
 		}
 }
