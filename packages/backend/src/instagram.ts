@@ -12,13 +12,13 @@ export class InstagramClient {
 	}
 	
 	async login(username:string, password: string): Promise<User> {
-		this.ig.state.generateDevice(username); 
+		this.ig.state.generateDevice(username);
 		await this.ig.simulate.preLoginFlow();
-		
+
 		const loggedInUser = await this.ig.account.login(username, password); //login fails catch will be added later...
-		
+
 		await this.saveSession(); //creating multiple sessions can raise sus!
-		
+
 		return this.mapUser(loggedInUser);
 	}
 	
