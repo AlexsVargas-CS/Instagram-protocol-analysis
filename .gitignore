@@ -1,2 +1,8 @@
 node_modules/
 nul
+
+# Project docs (keep local only)
+PROGRESS.md
+CLAUDE.md
+.claude/
+instagram-cli-development-roadmap_1.md
