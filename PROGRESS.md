@@ -1,8 +1,8 @@
 # Instagram CLI TUI - Development Progress
 
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-08
 **Current Phase:** Phase 1 - Backend Service Setup
-**Current Step:** Step 2 - Implementing instagram.ts
+**Current Step:** Step 2 - Finishing instagram.ts (error handling remaining)
 
 ---
 
@@ -51,19 +51,21 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
   - `DirectInboxFeedResponseUsersItem` (for users)
   - Fields identified: thread_id, users, last_permanent_item, is_group, last_activity_at
 
+#### Step 2: instagram.ts (Sessions 3 - 2026-02-08)
+- [x] Create `InstagramClient` class
+- [x] Implement `login()` with username/password
+- [x] Implement `saveSession()` to persist auth state
+- [x] Implement `loadSession()` to restore auth state
+- [x] Implement `getThreads()` to fetch conversation list
+- [x] Map Instagram API responses to defined types (mapUser, mapThread, mapMessage)
+- [x] Export the client class
+
 ### 🔄 In Progress
 
-#### Step 2: instagram.ts (Current)
-- [ ] Create `InstagramClient` class
-- [ ] Implement `login()` with username/password
-- [ ] Implement `saveSession()` to persist auth state
-- [ ] Implement `loadSession()` to restore auth state
-- [ ] Implement `getThreads()` to fetch conversation list
-- [ ] Map Instagram API responses to our defined types
+#### Step 2: instagram.ts - Remaining
 - [ ] Handle API errors gracefully
-- [ ] Export the client class
 
-**Next Immediate Action:** Start implementing the `InstagramClient` class skeleton
+**Next Immediate Action:** Add error handling to InstagramClient methods, then start Step 3 (server.ts)
 
 ### 📋 Pending Tasks
 
@@ -165,6 +167,22 @@ Building an Instagram CLI TUI to reduce doomscrolling while maintaining messagin
 ---
 
 ## Session Log
+
+### Session 3: 2026-02-08 (InstagramClient Implementation & Mapper Functions)
+**Focus:** Implementing the InstagramClient class methods and mapper functions with iterative code review
+
+**Accomplishments:**
+- Implemented mapper functions: mapUser, mapThread, mapMessage
+- Implemented `getThreads()` using directInbox feed
+- Implemented `getMessages()` using directThread feed
+- Added `sendMessage()` placeholder (Phase 5)
+- Iterative code review fixing syntax errors, type mismatches, and logic bugs
+- Fixed types.ts: `thread_Id` → `thread_id`, corrected `lastMessage` field type
+- Cleaned up dead code (removed unused for loop in getThreads)
+
+**Next Session Goals:**
+- Add error handling to InstagramClient methods
+- Start Step 3: server.ts (stdin JSON-RPC server, method routing)
 
 ### Session 2: 2026-02-05 (Backend Development Kickoff)
 **Focus:** Understanding backend structure and creating types.ts
