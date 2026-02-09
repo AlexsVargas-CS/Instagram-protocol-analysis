@@ -1,6 +1,6 @@
-import { IgApiClient } from 'instagram-private-api';
+import { IgApiClient, IgLoginBadPasswordError, IgCheckpointError, IgLoginTwoFactorRequiredError } from 'instagram-private-api';
+import { User, Thread, Message, AuthenticationError, InstagramAPIError } from './types';
 import * as fs from 'fs/promises';
-import { User, Thread, Message } from './types';
 
 export class InstagramClient {
   private ig: IgApiClient;
@@ -11,16 +11,47 @@ export class InstagramClient {
 		this.sessionPath = sessionPath;
 	}
 	
+	
+	
+	
+	
 	async login(username:string, password: string): Promise<User> {
-		this.ig.state.generateDevice(username);
-		await this.ig.simulate.preLoginFlow();
+		try {
+			
+			this.ig.state.generateDevice(username);
+			
+			await this.ig.simulate.preLoginFlow();
 
-		const loggedInUser = await this.ig.account.login(username, password); //login fails catch will be added later...
+			const loggedInUser = await this.ig.account.login(username, password); //login fails catch will be added later...
 
-		await this.saveSession(); //creating multiple sessions can raise sus!
+			await this.saveSession(); //creating multiple sessions can raise sus!
 
-		return this.mapUser(loggedInUser);
+			return this.mapUser(loggedInUser);
+		
+		}
+		catch(error) {
+			if (error instanceof IgLoginBadPasswordError) {
+				throw new AuthenticationError('Incorrect password', 'bad_credentials');
+			}
+			else if (error instanceof IgCheckpointError) {
+				throw new AuthenticationError('Challenge required — verify on your phone', 'checkpoint_required');
+			} 
+			else if (error instanceof IgLoginTwoFactorRequiredError) {	
+				throw new AuthenticationError('Two-factor authentication required', 'two_factor_required');
+			}
+			else{
+				throw new InstagramAPIError(
+					error instanceof Error ? error.message : 'Login failed',
+				);
+				
+			}
+		
+		}
+		
 	}
+	
+	
+	
 	
 	async loadSession(): Promise<boolean> {//session is either restored or not.
 		//get the session/ read it, feed saved state back into the library's internal state machine, call user to make sure session hasnt expired.

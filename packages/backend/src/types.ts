@@ -1,13 +1,13 @@
 export class InstagramClientError extends Error {
 	constructor(message: string){
 		super(message);
-		this.name = 'InstgramClientError';
+		this.name = 'InsatgramClientError';
 
 		}
 }
 
-export class AuthenticationError extends Error {
-	public reason = 'bad_credentials' | 'checkpoint_required' | 'two_factor_required';
+export class AuthenticationError extends InstagramClientError {
+	public reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required';
 	
 	constructor(message: string, reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required') {
     super(message);
