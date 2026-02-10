@@ -11,10 +11,6 @@ export class InstagramClient {
 		this.sessionPath = sessionPath;
 	}
 	
-	
-	
-	
-	
 	async login(username:string, password: string): Promise<User> {
 		try {
 			
@@ -84,7 +80,7 @@ export class InstagramClient {
 		};
 	}
 	
-	async getMessages(threadId: string, _cursor?: string): Promise<Message[]> {
+	async getMessages(thread_id: string, _cursor?: string): Promise<Message[]> {
 		try {
 			const feed = await this.ig.feed.directThread({thread_id: threadId});
 			const threads = await feed.items(); // this should return a array that contains the threads info
@@ -115,7 +111,7 @@ export class InstagramClient {
 	}
 	
 
-	async sendMessage(threadId: string, _text: string): Promise<Message> {
+	async sendMessage(thread_id: string, _text: string): Promise<Message> {
     // TODO: Implement in Phase 5
     throw new Error(`sendMessage not yet implemented for thread ${threadId}`);
 	}
