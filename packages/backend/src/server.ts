@@ -69,19 +69,22 @@ const rl = readline.createInterface({
 });
 
 rl.on('line', async (line:string) => { //goal: dont allow any input other then a valid input 
-
 	let request; 
-	
 	try{
 		request = JSON.parse(line);
+		
 	} catch {
 		sendError(0, -32700, 'Parse Error');
 		return;
 	}
+	if (typeof request.id !== 'number' || request.method !== 'string'){
+		sendError(request.id ?? 0, -32600, 'Invalid request');
+		return;		
+	}
+	
+	await handleRequest(request);
 	
 });
-
-
 
 async function handleRequest(req: Request): Promise<void> {
 	
@@ -135,4 +138,15 @@ async function handleRequest(req: Request): Promise<void> {
 	
 
 }  
+
+
+
+async function init(): Promise<void> {
+	const restored = await client.loadSession();
+	sendEvent('sessionRestored', {success: restored});
+	
+}
+
+init();
+
 
