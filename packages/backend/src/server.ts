@@ -82,7 +82,9 @@ rl.on('line', async (line:string) => { //goal: dont allow any input other then a
 
 
 async function handleRequest(req: Request): Promise<void> {
-	let result: unknown;
+	
+	try {
+		let result: unknown;
 	
 	switch(req.method) {
 		case 'login':{
@@ -115,9 +117,10 @@ async function handleRequest(req: Request): Promise<void> {
 		sendError(req.id, -32601, `Method not found: ${req.method}`);
 		return; 
 	}
-	sendResponse(req.id, result);
+	sendResponse(req.id, result);		
+		
+	}
 	
-	
-	
+
 }  
 
