@@ -82,25 +82,24 @@ export class InstagramClient {
 	
 	async getMessages(thread_id: string, _cursor?: string): Promise<Message[]> {
 		try {
-			const feed = await this.ig.feed.directThread({thread_id: threadId});
-			const threads = await feed.items(); // this should return a array that contains the threads info
+			const feed = await this.ig.feed.directThread({thread_id,  oldest_cursor: _cursor ?? ''});
+			const items = await feed.items(); // this should return a array that contains the threads info
 		//with this raw thread we can now extract last_permanent_item
 		
 		//we then return a threads then map it using thread.last_perm after 
 		//we filter by checking that the item is not empty and finally map it to mapMessage
 		
-			return threads
-			.map(thread => thread.last_permanent_item)
-			.filter(item => item != null)
+			 return items
+			.filter(item => item != null && item.text != null)
 			.map((item) => this.mapMessage(item));
 	
-		//throw new Error(`getMessages not yet implemented for thread ${threadId}`)
+		//throw new Error(`getMessages not yet implemented for thread ${thread_id}`)
 		}catch (error) {
 			if (error instanceof IgLoginRequiredError) {
 				throw new SessionError('Session expired: please log in again');
 			} else{
 				throw new InstagramAPIError(
-					error instanceof Error ? error.message : `Failed to fetch messages for thread ${threadId}`,
+					error instanceof Error ? error.message : `Failed to fetch messages for thread ${thread_id}`,
 				);
 			}
 		}
@@ -113,7 +112,7 @@ export class InstagramClient {
 
 	async sendMessage(thread_id: string, _text: string): Promise<Message> {
     // TODO: Implement in Phase 5
-    throw new Error(`sendMessage not yet implemented for thread ${threadId}`);
+    throw new Error(`sendMessage not yet implemented for thread ${thread_id}`);
 	}
 
 	// basically our types differ from the library we are using 

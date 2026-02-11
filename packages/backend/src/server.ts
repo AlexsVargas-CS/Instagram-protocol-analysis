@@ -77,7 +77,7 @@ rl.on('line', async (line:string) => { //goal: dont allow any input other then a
 		sendError(0, -32700, 'Parse Error');
 		return;
 	}
-	if (typeof request.id !== 'number' || request.method !== 'string'){
+	if (typeof request.id !== 'number' || typeof request.method !== 'string'){
 		sendError(request.id ?? 0, -32600, 'Invalid request');
 		return;		
 	}
@@ -112,8 +112,8 @@ async function handleRequest(req: Request): Promise<void> {
 		}
 		case 'sendMessage': {
 			result = await client.sendMessage(
-			(req.params.thread_id as string), 
-			(req.params.text as string),
+			req.params.thread_id as string, 
+			req.params.text as string,
 			);
 			break; 
 		}
