@@ -1,6 +1,8 @@
 import * as readline from 'readline';
 import 'dotenv/config';
 import {InstagramClient} from './instagram';
+import { AuthenticationError, SessionError, InstagramAPIError } from './types';
+
 
 const client = new InstagramClient();
 
@@ -88,10 +90,10 @@ async function handleRequest(req: Request): Promise<void> {
 	
 	switch(req.method) {
 		case 'login':{
-		const username = (req.params.username as string) || process.env.IG_USERNAME;
-		const password = (req.params.password as string) || process.env.IG_PASSWORD; 
-		result = await client.login(username!, password!);
-		break;
+			const username = (req.params.username as string) || process.env.IG_USERNAME;
+			const password = (req.params.password as string) || process.env.IG_PASSWORD; 
+			result = await client.login(username!, password!);
+			break;
 		}
 		case 'getThreads': {
 			result = await client.getThreads();
@@ -113,12 +115,22 @@ async function handleRequest(req: Request): Promise<void> {
 			break; 
 		}
 		
-		default: 
-		sendError(req.id, -32601, `Method not found: ${req.method}`);
-		return; 
-	}
-	sendResponse(req.id, result);		
+			default: 
+			sendError(req.id, -32601, `Method not found: ${req.method}`);
+			return; 
+		}
+		sendResponse(req.id, result);		
 		
+	} catch (error) {
+		if (error instanceof AuthenticationError) {
+			sendError(req.id, -32001, error.message);
+		} else if (error instanceof SessionError) {
+			sendError(req.id, -32001,error.message);
+		} else if (error instanceof InstagramAPIError) {
+			sendError(req.id, -32000, error.message);
+		}else {
+			sendError(req.id, -32000, error instanceof Error ? error.message : 'unknown error');
+		}
 	}
 	
 
