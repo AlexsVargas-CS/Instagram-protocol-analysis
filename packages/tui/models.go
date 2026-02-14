@@ -48,6 +48,7 @@ type Thread struct {
 type Message struct {
 	Text      string `json:"text"`
 	Timestamp int64  `json:"timestamp"`
+	UserId string `json:"userId"`
 }
 //nil means not fetched yet
 

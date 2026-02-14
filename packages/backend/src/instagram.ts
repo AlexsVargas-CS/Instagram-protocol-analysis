@@ -77,6 +77,8 @@ export class InstagramClient {
 		return {
 			text: String(r.text ?? ''),
 			timestamp: 0,
+			userId: String(r.userId ?? ''),
+
 		};
 	}
 	
@@ -140,7 +142,7 @@ export class InstagramClient {
 		const raw_last_perm_item = r.last_permanent_item;
 		
 		const users = Array.isArray(raw_user) ? raw_user.map((field) => this.mapUser(field)) : []; // check if users array exists, then map else empty arr
-		const last_perm_item = raw_last_perm_item ? this.mapMessage(raw_last_perm_item) : {text: '', timestamp: 0} ; 
+		const last_perm_item = raw_last_perm_item ? this.mapMessage(raw_last_perm_item) : {text: '', timestamp: 0, userId: ''} ; 
 	
 		
 		return{

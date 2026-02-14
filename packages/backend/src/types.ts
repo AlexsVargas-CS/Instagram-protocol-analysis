@@ -44,6 +44,7 @@ export interface User{
 export interface Message{ 
 	text: string;
 	timestamp: number;
+	userId: string;
 	
 }
 
