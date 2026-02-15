@@ -290,19 +290,19 @@ func (m Model) renderStatusBar() string {
 
 
 
+
 func (m Model) getVisibleThreads() []int {
-	if m.mode == ModeSearch && len(m.filteredIndices) > 0 {
+	if m.filteredIndices != nil {
 		return m.filteredIndices
 	}
 
-	// Return all thread indices
+	// No search active — return all thread indices
 	indices := make([]int, len(m.threads))
 	for i := range m.threads {
 		indices[i] = i
 	}
 	return indices
 }
-
 
 func getThreadDisplayName(t Thread) string {
 	if t.IsGroup {
