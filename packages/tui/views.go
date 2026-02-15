@@ -226,9 +226,9 @@ func (m Model) renderConversation(width, height int) string {
 	// Conversation header — who you're talking to
 	displayName := getThreadDisplayName(*m.activeThread)
 	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("15")).
-		Render("@" + displayName)
+			Bold(true).
+			Foreground(lipgloss.Color("15")).
+			Render("@" + displayName)
 		b.WriteString(header)
 		b.WriteString("\n")
 		b.WriteString(strings.Repeat("─", width))
