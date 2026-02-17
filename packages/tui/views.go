@@ -96,19 +96,29 @@ func (m Model) View() string {
 	leftWidth := m.width/3
 	rightWidth := m.width - leftWidth -1
 
- //render the panels 
- //the left panel will render the threadList 
+ //render the panels
+ //the left panel will render the threadList
  // The right will render the convo
 	leftPanel := m.renderThreadList(leftWidth, bodyHeight)
 	rightPanel := m.renderConversation(rightWidth, bodyHeight)
 
+	// Focus-aware border colors
+	leftStyle := leftPanelBaseStyle
+	rightStyle := rightPanelBaseStyle
+	if m.focus == FocusThreadList {
+		leftStyle = leftStyle.BorderForeground(lipgloss.Color("86"))
+	} else {
+		rightStyle = rightStyle.BorderLeft(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("86"))
+	}
 
-	left := leftPanelBaseStyle.
+	left := leftStyle.
 		Width(leftWidth).
 		Height(bodyHeight).
 		Render(leftPanel)
 
-	right := rightPanelBaseStyle.
+	right := rightStyle.
 		Width(rightWidth).
 		Height(bodyHeight).
 		Render(rightPanel)
@@ -152,10 +162,10 @@ func (m Model) renderThreadList(width, height int) string {
 
 	// Search bar: show input when in search mode, otherwise show hint
 	if m.mode == ModeSearch {
-		b.WriteString(searchBarStyle.Render("🔍 "))
+		b.WriteString(searchBarStyle.Render("/ "))
 		b.WriteString(m.searchInput.View())
 	} else {
-		b.WriteString(placeholderStyle.Render("🔍 Press s to search"))
+		b.WriteString(placeholderStyle.Render("/ Press s to search"))
 	}
 	b.WriteString("\n\n")
 
@@ -171,21 +181,31 @@ func (m Model) renderThreadList(width, height int) string {
 		return b.String()
 	}
 
+	// Thread list scrolling — each thread takes ~3 lines (name + preview + gap)
+	maxVisible := max(1, (height-2)/3) // subtract 2 for search bar + blank line
+	offset := m.threadListOffset
+
+	end := offset + maxVisible
+	if end > len(threads) {
+		end = len(threads)
+	}
+	visibleSlice := threads[offset:end]
+
 	// Render each thread entry
-	for i, idx := range threads {
+	for vi, idx := range visibleSlice {
+		i := offset + vi // logical index in full visible list
 		thread := m.threads[idx]
 
 		var indicator string
 		if i == m.cursor {
-			indicator = "→ "
+			indicator = "> "
 		} else {
-			indicator = "▷ "
+			indicator = "  "
 		}
 
 		// Build display name from first user (or "Group" for group chats)
 		displayName := getThreadDisplayName(thread)
 
-		
 		maxNameWidth := width - 8
 		if maxNameWidth < 4 {
 			maxNameWidth = 4
@@ -220,6 +240,17 @@ func (m Model) renderThreadList(width, height int) string {
 		b.WriteString("\n")
 	}
 
+	// Scroll indicators
+	if offset > 0 {
+		b.WriteString(placeholderStyle.Render(fmt.Sprintf("  ... %d more above", offset)))
+		b.WriteString("\n")
+	}
+	remaining := len(threads) - end
+	if remaining > 0 {
+		b.WriteString(placeholderStyle.Render(fmt.Sprintf("  ... %d more below", remaining)))
+		b.WriteString("\n")
+	}
+
 	return b.String()
 }
 func (m Model) renderConversation(width, height int) string {
@@ -231,54 +262,35 @@ func (m Model) renderConversation(width, height int) string {
 
 	var b strings.Builder
 
-	// Conversation header — who you're talking to
+	// --- Header (static, 2 lines) ---
 	displayName := getThreadDisplayName(*m.activeThread)
 	header := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Render("@" + displayName)
-		b.WriteString(header)
-		b.WriteString("\n")
-		b.WriteString(strings.Repeat("─", width))
-		b.WriteString("\n")
+		Bold(true).
+		Foreground(lipgloss.Color("15")).
+		Render("@" + displayName)
+	b.WriteString(header)
+	b.WriteString("\n")
 
-	// Messages
-	if m.activeMessages == nil {
-		b.WriteString(placeholderStyle.Render("Loading messages..."))
-	} else if len(m.activeMessages) == 0 {
-		b.WriteString(placeholderStyle.Render("No messages yet"))
-	} else {
-		for _, msg := range m.activeMessages {
-			ts := formatTimestamp(msg.Timestamp)
-			isMe := msg.UserId == "me"
-
-			if isMe {
-				// Right-aligned: my messages
-				bubble := myMessageStyle.Render(msg.Text)
-				bubbleWidth := lipgloss.Width(bubble)
-				pad := width - bubbleWidth
-				if pad < 0 {
-					pad = 0
-				}
-				b.WriteString(strings.Repeat(" ", pad) + bubble + "\n")
-				// Right-align timestamp too
-				tsRendered := timestampStyle.Render(ts)
-				tsPad := width - lipgloss.Width(tsRendered)
-				if tsPad < 0 {
-					tsPad = 0
-				}
-				b.WriteString(strings.Repeat(" ", tsPad) + tsRendered + "\n\n")
-			} else {
-				// Left-aligned: their messages with username label
-				sender := usernameStyle.Render(getUsernameById(m.activeThread.Users, msg.UserId))
-				b.WriteString(sender + "\n")
-				b.WriteString(theirMessageStyle.Render(msg.Text) + "\n")
-				b.WriteString(timestampStyle.Render(ts) + "\n\n")
-			}
+	// Scroll indicator or plain separator
+	if !m.messageViewport.AtBottom() {
+		scrollPct := int(m.messageViewport.ScrollPercent() * 100)
+		indicator := fmt.Sprintf("── %d%% ──", scrollPct)
+		b.WriteString(placeholderStyle.Render(indicator))
+		// Fill rest of line with separator
+		remaining := width - lipgloss.Width(indicator)
+		if remaining > 0 {
+			b.WriteString(placeholderStyle.Render(strings.Repeat("─", remaining)))
 		}
+	} else {
+		b.WriteString(strings.Repeat("─", width))
 	}
+	b.WriteString("\n")
 
-	
+	// --- Viewport (scrollable messages) ---
+	b.WriteString(m.messageViewport.View())
+	b.WriteString("\n")
+
+	// --- Input (static, 2 lines) ---
 	b.WriteString("\n")
 	if m.mode == ModeInsert {
 		b.WriteString("> " + m.messageInput.View())
@@ -289,11 +301,59 @@ func (m Model) renderConversation(width, height int) string {
 	return b.String()
 }
 
+// buildMessageContent renders all messages into a string for the viewport.
+func (m Model) buildMessageContent() string {
+	if m.activeMessages == nil {
+		return placeholderStyle.Render("Loading messages...")
+	}
+	if len(m.activeMessages) == 0 {
+		return placeholderStyle.Render("No messages yet")
+	}
+
+	w := m.viewportWidth()
+	var b strings.Builder
+
+	for _, msg := range m.activeMessages {
+		ts := formatTimestamp(msg.Timestamp)
+		isMe := msg.UserId == "me"
+
+		if isMe {
+			// Right-aligned: my messages
+			bubble := myMessageStyle.Render(msg.Text)
+			bubbleWidth := lipgloss.Width(bubble)
+			pad := w - bubbleWidth
+			if pad < 0 {
+				pad = 0
+			}
+			b.WriteString(strings.Repeat(" ", pad) + bubble + "\n")
+			// Right-align timestamp too
+			tsRendered := timestampStyle.Render(ts)
+			tsPad := w - lipgloss.Width(tsRendered)
+			if tsPad < 0 {
+				tsPad = 0
+			}
+			b.WriteString(strings.Repeat(" ", tsPad) + tsRendered + "\n\n")
+		} else {
+			// Left-aligned: their messages with username label
+			sender := usernameStyle.Render(getUsernameById(m.activeThread.Users, msg.UserId))
+			b.WriteString(sender + "\n")
+			b.WriteString(theirMessageStyle.Render(msg.Text) + "\n")
+			b.WriteString(timestampStyle.Render(ts) + "\n\n")
+		}
+	}
+
+	return b.String()
+}
+
 func (m Model) renderStatusBar() string {
 	var keys string
 	switch m.mode {
 	case ModeNormal:
-		keys = "j/k: nav  Enter: load  s: search  i: insert  q: quit"
+		if m.focus == FocusConversation {
+			keys = "j/k: scroll  u/d: page  G: bottom  gg: top  h: threads  i: insert"
+		} else {
+			keys = "j/k: nav  l: chat  Enter: load  s: search  i: insert  q: quit"
+		}
 	case ModeSearch:
 		keys = "Type to filter  Enter: select  Esc: cancel"
 	case ModeInsert:

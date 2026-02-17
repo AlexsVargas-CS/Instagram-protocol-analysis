@@ -14,6 +14,13 @@ const (
 	ModeInsert
 )
 
+type FocusPanel int
+
+const (
+	FocusThreadList FocusPanel = iota
+	FocusConversation
+)
+
 func (m Mode) String() string {
 	switch m {
 	case ModeNormal:
@@ -51,6 +58,8 @@ type Message struct {
 
 type Model struct {
 	mode      Mode
+	focus     FocusPanel
+	pendingG  bool // for gg (go-to-top) two-key sequence
 	width     int
 	height    int
 	connected bool
@@ -62,8 +71,9 @@ type Model struct {
 	backend *Backend
 	rpc     *RPCClient
 
-	threads []Thread
-	cursor  int // index of highlighted thread
+	threads          []Thread
+	cursor           int // index of highlighted thread
+	threadListOffset int // scroll offset for left panel
 
 	loaded bool // whether a convo has been loaded at least once
 
@@ -79,10 +89,22 @@ type Model struct {
 	messageInput      textinput.Model
 }
 
+const conversationHeaderHeight = 2 // @name + separator
+const conversationInputHeight = 2  // blank line + input prompt
 
-func InitialModel() Model{
-	//config for search bar 
-	searchInput  := textinput.New()
+func (m Model) viewportHeight() int {
+	bodyHeight := m.height - 2 // header bar + status bar
+	return max(1, bodyHeight-conversationHeaderHeight-conversationInputHeight)
+}
+
+func (m Model) viewportWidth() int {
+	return m.width - m.width/3 - 1
+}
+
+
+func InitialModel() Model {
+	//config for search bar
+	searchInput := textinput.New()
 	searchInput.Placeholder = "Search threads..."
 	searchInput.CharLimit = 64
 
@@ -90,13 +112,17 @@ func InitialModel() Model{
 	msgInput.Placeholder = "Type a message..."
 	msgInput.CharLimit = 2000
 
+	vp := viewport.New(0, 0) // real dims arrive in WindowSizeMsg
+	// Disable h/l horizontal scroll — we use those for panel switching
+	vp.KeyMap.Left.SetEnabled(false)
+	vp.KeyMap.Right.SetEnabled(false)
+
 	return Model{
-		mode: ModeNormal,
-		searchInput: searchInput,
-		messageInput: msgInput,
-
+		mode:            ModeNormal,
+		searchInput:     searchInput,
+		messageInput:    msgInput,
+		messageViewport: vp,
 	}
-
 }
 
 func (m Model) Init() tea.Cmd {
