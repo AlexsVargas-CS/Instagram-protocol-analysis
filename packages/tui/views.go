@@ -243,7 +243,9 @@ func (m Model) renderConversation(width, height int) string {
 		b.WriteString("\n")
 
 	// Messages
-	if len(m.activeMessages) == 0 {
+	if m.activeMessages == nil {
+		b.WriteString(placeholderStyle.Render("Loading messages..."))
+	} else if len(m.activeMessages) == 0 {
 		b.WriteString(placeholderStyle.Render("No messages yet"))
 	} else {
 		for _, msg := range m.activeMessages {
@@ -298,11 +300,16 @@ func (m Model) renderStatusBar() string {
 		keys = "Type message  Enter: send  Esc: cancel"
 	}
 
+	// Show status message if present, otherwise show keybindings.
+	left := keys
+	if m.statusMsg != "" {
+		left = m.statusMsg + "  |  " + keys
+	}
+
 	// Mode badge on the right
 	modeBadge := modeStyle.Render(m.mode.String())
 
-	// Spacing between keys and mode badge
-	spacerWidth := m.width - lipgloss.Width(keys) - lipgloss.Width(modeBadge) - 2
+	spacerWidth := m.width - lipgloss.Width(left) - lipgloss.Width(modeBadge) - 2
 	if spacerWidth < 1 {
 		spacerWidth = 1
 	}
@@ -310,7 +317,7 @@ func (m Model) renderStatusBar() string {
 
 	return statusBarStyle.
 		Width(m.width).
-		Render(keys + spacer + modeBadge)
+		Render(left + spacer + modeBadge)
 }
 
 

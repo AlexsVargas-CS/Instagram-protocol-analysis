@@ -1,12 +1,9 @@
 package main
 
 import (
-	//"encoding/json"
-
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-
 )
 
 type Mode int
@@ -52,37 +49,34 @@ type Message struct {
 }
 //nil means not fetched yet
 
-type Model struct{
-	mode Mode  //our current input mode 
-	width int 
-	height int
+type Model struct {
+	mode      Mode
+	width     int
+	height    int
 	connected bool
-	username string
+	username  string
 	statusMsg string
-	err error
+	err       error
 
+	// IPC — backend process and RPC client
+	backend *Backend
+	rpc     *RPCClient
 
 	threads []Thread
-	cursor int // our index of our highlighted thread
+	cursor  int // index of highlighted thread
 
-	loaded bool	 //whether a convo has been loaded at least once
-	// ------Search panel----
+	loaded bool // whether a convo has been loaded at least once
 
-	searchInput textinput.Model 
-
+	// Search panel
+	searchInput     textinput.Model
 	filteredIndices []int
 
-	//----right panel---
-	activeThread *Thread // start Thread pointer at nil
-	activeMessages []Message //populated by getMessages() repsonse from backend
-	
-	messageViewport viewport.Model //manages scroll pos
-
+	// Right panel — conversation
+	activeThread      *Thread
+	activeMessages    []Message
+	messageViewport   viewport.Model
 	conversationCache map[string][]Message
-
-	//----Right panel: convo-----
-	messageInput textinput.Model
-
+	messageInput      textinput.Model
 }
 
 
@@ -106,5 +100,8 @@ func InitialModel() Model{
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.rpc != nil {
+		return listenForBackendEvents(m.rpc)
+	}
 	return nil
 }

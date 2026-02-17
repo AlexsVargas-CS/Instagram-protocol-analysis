@@ -11,12 +11,19 @@ import (
 func main() {
 	m := InitialModel()
 
-	m.threads = dummyThreads()
-	m.conversationCache = dummyConversations()
-	m.connected = true
-	m.username = "your_username"
+	// Spawn the TypeScript backend as a child process.
+	backend, err := StartBackend()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start backend: %v\n", err)
+		os.Exit(1)
+	}
+	defer backend.Stop()
 
-	// Alt-screen gives us the full terminal and restores it on exit.
+	m.backend = backend
+	m.rpc = NewRPCClient(backend.Stdin, backend.Stdout)
+	m.statusMsg = "Connecting..."
+	m.conversationCache = make(map[string][]Message)
+
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
@@ -24,6 +31,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Dummy data — kept for offline testing, no longer called by default.
+// ---------------------------------------------------------------------------
 
 func dummyThreads() []Thread {
 	now := time.Now()
@@ -117,14 +128,6 @@ func dummyThreads() []Thread {
 		},
 	}
 }
-
-// ---------------------------------------------------------------------------
-// dummyConversations returns hardcoded message histories for each dummy thread.
-//
-// Keyed by thread ID so loadConversation() can look them up from the cache.
-// Each conversation has 3-5 messages with realistic back-and-forth dialogue.
-// "me" is the current user; other userIds match the thread's Users.
-// ---------------------------------------------------------------------------
 
 func dummyConversations() map[string][]Message {
 	now := time.Now()

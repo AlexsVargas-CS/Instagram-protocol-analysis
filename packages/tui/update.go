@@ -15,7 +15,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	// A key was pressed — behavior depends on current mode.
+	// --- Async messages from backend ---
+
+	case SessionRestoredMsg:
+		m.connected = msg.Success
+		if msg.Success {
+			m.statusMsg = "Session restored"
+		} else {
+			m.statusMsg = "No session found"
+		}
+		var cmds []tea.Cmd
+		if m.rpc != nil {
+			cmds = append(cmds, listenForBackendEvents(m.rpc))
+		}
+		if msg.Success && m.rpc != nil {
+			cmds = append(cmds, fetchThreadsCmd(m.rpc))
+		}
+		return m, tea.Batch(cmds...)
+
+	case BackendDisconnectedMsg:
+		m.connected = false
+		m.statusMsg = "Backend disconnected"
+		return m, nil
+
+	case ThreadsLoadedMsg:
+		if msg.Err != nil {
+			m.statusMsg = "Failed to load threads: " + msg.Err.Error()
+			return m, nil
+		}
+		m.threads = msg.Threads
+		m.statusMsg = "Threads loaded"
+		return m, nil
+
+	case MessagesLoadedMsg:
+		if msg.Err != nil {
+			m.statusMsg = "Failed to load messages: " + msg.Err.Error()
+			return m, nil
+		}
+		// Cache the messages.
+		m.conversationCache[msg.ThreadID] = msg.Messages
+		// If the user is still viewing this thread, update the display.
+		if m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID {
+			m.activeMessages = msg.Messages
+		}
+		m.statusMsg = ""
+		return m, nil
+
+	case MessageSentMsg:
+		if msg.Err != nil {
+			m.statusMsg = "Send failed: " + msg.Err.Error()
+		}
+		return m, nil
+
+	// --- Keyboard input ---
+
 	case tea.KeyMsg:
 		switch m.mode {
 		case ModeNormal:
@@ -30,7 +83,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-
 func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 
@@ -43,7 +95,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 		if m.loaded {
-			m.loadConversation()
+			return m.loadConversationCmd()
 		}
 		return m, nil
 
@@ -52,14 +104,13 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 		}
 		if m.loaded {
-			m.loadConversation()
+			return m.loadConversationCmd()
 		}
 		return m, nil
 
 	case "enter":
 		m.loaded = true
-		m.loadConversation()
-		return m, nil
+		return m.loadConversationCmd()
 
 	case "s":
 		m.mode = ModeSearch
@@ -68,7 +119,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "i":
-		
 		if m.activeThread != nil {
 			m.mode = ModeInsert
 			m.messageInput.Focus()
@@ -93,17 +143,15 @@ func (m Model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		visible := m.getVisibleThreads()
 		if len(visible) > 0 && m.cursor < len(visible) {
-			// Map filtered cursor back to the real thread index
 			realIndex := visible[m.cursor]
 
 			m.mode = ModeNormal
 			m.searchInput.Blur()
 			m.searchInput.SetValue("")
 			m.filteredIndices = nil
-			// Set cursor to real index and load the convo
 			m.cursor = realIndex
 			m.loaded = true
-			m.loadConversation()
+			return m.loadConversationCmd()
 		}
 		return m, nil
 	}
@@ -130,39 +178,57 @@ func (m Model) updateInsertMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.messageInput.Blur()
 		m.messageInput.SetValue("")
 		return m, nil
+
 	case "enter":
 		text := strings.TrimSpace(m.messageInput.Value())
-		if text != "" {
+		if text != "" && m.activeThread != nil {
+			// Optimistic local append for immediate UX.
 			newMsg := Message{
 				Text:      text,
 				Timestamp: time.Now().UnixMicro(),
 				UserId:    "me",
 			}
 			m.activeMessages = append(m.activeMessages, newMsg)
-			m.statusMsg = "Message sent"
+			m.messageInput.SetValue("")
+
+			// Fire the backend send (will fail gracefully if not implemented).
+			if m.rpc != nil {
+				return m, sendMessageCmd(m.rpc, m.activeThread.ThreadID, text)
+			}
 		}
 		m.messageInput.SetValue("")
 		return m, nil
 	}
+
 	var cmd tea.Cmd
 	m.messageInput, cmd = m.messageInput.Update(msg)
 	return m, cmd
 }
 
-func (m *Model) loadConversation() {
+// loadConversationCmd sets the active thread and either returns cached messages
+// immediately or fires an async fetch command.
+func (m Model) loadConversationCmd() (tea.Model, tea.Cmd) {
 	if len(m.threads) == 0 {
-		return
+		return m, nil
 	}
 	if m.cursor >= len(m.threads) {
 		m.cursor = len(m.threads) - 1
 	}
 	m.activeThread = &m.threads[m.cursor]
 
+	// Cache hit — set messages immediately.
 	if msgs, ok := m.conversationCache[m.activeThread.ThreadID]; ok {
 		m.activeMessages = msgs
-	} else {
-		m.activeMessages = nil
+		return m, nil
 	}
+
+	// Cache miss — show loading and fetch from backend.
+	m.activeMessages = nil
+	m.statusMsg = "Loading messages..."
+	if m.rpc != nil {
+		return m, fetchMessagesCmd(m.rpc, m.activeThread.ThreadID)
+	}
+	return m, nil
 }
 
 func (m *Model) filterThreads() {
@@ -173,7 +239,7 @@ func (m *Model) filterThreads() {
 		return
 	}
 
-	m.filteredIndices = []int{} // empty but not nil means "searched, no results yet"
+	m.filteredIndices = []int{}
 	for i, thread := range m.threads {
 		for _, user := range thread.Users {
 			if strings.Contains(strings.ToLower(user.Username), query) {
@@ -183,8 +249,3 @@ func (m *Model) filterThreads() {
 		}
 	}
 }
-
-
-
-
-

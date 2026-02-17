@@ -7,3 +7,13 @@ CLAUDE.md
 .claude/
 instagram-cli-development-roadmap_1.md
 instagram-cli-development-roadmap_UPDATED.md
+instagram-cli-mockup.html
+
+# Build output
+packages/backend/dist/
+
+# Auth session (contains credentials)
+packages/backend/session.json
+
+# Compiled binaries
+packages/tui/instagram-cli-tui.exe
