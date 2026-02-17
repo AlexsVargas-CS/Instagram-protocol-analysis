@@ -12,6 +12,7 @@ const (
 	ModeNormal Mode = iota
 	ModeSearch
 	ModeInsert
+	ModeLogin
 )
 
 type FocusPanel int
@@ -29,11 +30,20 @@ func (m Mode) String() string {
 		return "INSERT"
 	case ModeSearch:
 		return "SEARCH"
+	case ModeLogin:
+		return "LOGIN"
 	default:
 		return "UNKNOWN"
 	}
 
 }
+
+type LoginStep int
+
+const (
+	LoginStepUsername LoginStep = iota
+	LoginStepPassword
+)
 
 type User struct {
 	PK       string `json:"pk"`
@@ -54,7 +64,12 @@ type Message struct {
 	Timestamp int64  `json:"timestamp"`
 	UserId string `json:"userId"`
 }
-//nil means not fetched yet
+
+type GetMessagesResult struct {
+	Messages     []Message `json:"messages"`
+	OldestCursor *string   `json:"oldestCursor"`
+	HasOlder     bool      `json:"hasOlder"`
+}
 
 type Model struct {
 	mode      Mode
@@ -87,6 +102,17 @@ type Model struct {
 	messageViewport   viewport.Model
 	conversationCache map[string][]Message
 	messageInput      textinput.Model
+
+	// Pagination
+	cursorCache   map[string]string // thread_id → oldest cursor
+	hasOlderCache map[string]bool   // thread_id → has older messages
+	loadingOlder  bool              // request in flight
+
+	// Login
+	loginStep     LoginStep
+	usernameInput textinput.Model
+	passwordInput textinput.Model
+	loginError    string
 }
 
 const conversationHeaderHeight = 2 // @name + separator
@@ -117,11 +143,23 @@ func InitialModel() Model {
 	vp.KeyMap.Left.SetEnabled(false)
 	vp.KeyMap.Right.SetEnabled(false)
 
+	usernameInput := textinput.New()
+	usernameInput.Placeholder = "Username"
+	usernameInput.CharLimit = 64
+
+	passwordInput := textinput.New()
+	passwordInput.Placeholder = "Password"
+	passwordInput.CharLimit = 128
+	passwordInput.EchoMode = textinput.EchoPassword
+	passwordInput.EchoCharacter = '*'
+
 	return Model{
 		mode:            ModeNormal,
 		searchInput:     searchInput,
 		messageInput:    msgInput,
 		messageViewport: vp,
+		usernameInput:   usernameInput,
+		passwordInput:   passwordInput,
 	}
 }
 

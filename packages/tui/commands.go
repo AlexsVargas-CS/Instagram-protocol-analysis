@@ -26,9 +26,18 @@ type ThreadsLoadedMsg struct {
 
 // MessagesLoadedMsg carries the result of a "getMessages" RPC call.
 type MessagesLoadedMsg struct {
-	ThreadID string
-	Messages []Message
-	Err      error
+	ThreadID     string
+	Messages     []Message
+	OldestCursor *string
+	HasOlder     bool
+	IsOlderPage  bool
+	Err          error
+}
+
+// LoginResultMsg carries the result of a "login" RPC call.
+type LoginResultMsg struct {
+	User User
+	Err  error
 }
 
 // MessageSentMsg carries the result of a "sendMessage" RPC call.
@@ -80,19 +89,29 @@ func fetchThreadsCmd(rpc *RPCClient) tea.Cmd {
 }
 
 // fetchMessagesCmd calls "getMessages" on the backend for a specific thread.
-func fetchMessagesCmd(rpc *RPCClient, threadID string) tea.Cmd {
+func fetchMessagesCmd(rpc *RPCClient, threadID string, cursor string, isOlderPage bool) tea.Cmd {
 	return func() tea.Msg {
-		result, err := rpc.Send("getMessages", map[string]interface{}{
+		params := map[string]interface{}{
 			"thread_id": threadID,
-		})
+		}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		result, err := rpc.Send("getMessages", params)
 		if err != nil {
 			return MessagesLoadedMsg{ThreadID: threadID, Err: err}
 		}
-		var messages []Message
-		if err := json.Unmarshal(result, &messages); err != nil {
+		var parsed GetMessagesResult
+		if err := json.Unmarshal(result, &parsed); err != nil {
 			return MessagesLoadedMsg{ThreadID: threadID, Err: err}
 		}
-		return MessagesLoadedMsg{ThreadID: threadID, Messages: messages}
+		return MessagesLoadedMsg{
+			ThreadID:     threadID,
+			Messages:     parsed.Messages,
+			OldestCursor: parsed.OldestCursor,
+			HasOlder:     parsed.HasOlder,
+			IsOlderPage:  isOlderPage,
+		}
 	}
 }
 
@@ -104,5 +123,23 @@ func sendMessageCmd(rpc *RPCClient, threadID, text string) tea.Cmd {
 			"text":      text,
 		})
 		return MessageSentMsg{ThreadID: threadID, Err: err}
+	}
+}
+
+// loginCmd calls "login" on the backend with username and password.
+func loginCmd(rpc *RPCClient, username, password string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := rpc.Send("login", map[string]interface{}{
+			"username": username,
+			"password": password,
+		})
+		if err != nil {
+			return LoginResultMsg{Err: err}
+		}
+		var user User
+		if err := json.Unmarshal(result, &user); err != nil {
+			return LoginResultMsg{Err: err}
+		}
+		return LoginResultMsg{User: user}
 	}
 }

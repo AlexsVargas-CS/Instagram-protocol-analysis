@@ -56,3 +56,9 @@ export interface Thread {
 	lastActivityAt: number;
 	is_group: boolean;
 }
+
+export interface GetMessagesResult {
+  messages: Message[];
+  oldestCursor: string | null;
+  hasOlder: boolean;
+}

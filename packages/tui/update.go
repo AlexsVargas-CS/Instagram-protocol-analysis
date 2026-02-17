@@ -25,17 +25,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionRestoredMsg:
 		m.connected = msg.Success
-		if msg.Success {
-			m.statusMsg = "Session restored"
-		} else {
-			m.statusMsg = "No session found"
-		}
 		var cmds []tea.Cmd
 		if m.rpc != nil {
 			cmds = append(cmds, listenForBackendEvents(m.rpc))
 		}
-		if msg.Success && m.rpc != nil {
-			cmds = append(cmds, fetchThreadsCmd(m.rpc))
+		if msg.Success {
+			m.statusMsg = "Session restored"
+			if m.rpc != nil {
+				cmds = append(cmds, fetchThreadsCmd(m.rpc))
+			}
+		} else {
+			m.statusMsg = "No session found — please log in"
+			m.mode = ModeLogin
+			m.loginStep = LoginStepUsername
+			m.usernameInput.Focus()
 		}
 		return m, tea.Batch(cmds...)
 
@@ -56,16 +59,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MessagesLoadedMsg:
 		if msg.Err != nil {
 			m.statusMsg = "Failed to load messages: " + msg.Err.Error()
+			m.loadingOlder = false
 			return m, nil
 		}
-		// Cache the messages.
-		m.conversationCache[msg.ThreadID] = msg.Messages
-		// If the user is still viewing this thread, update the display.
-		if m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID {
-			m.activeMessages = msg.Messages
-			content := m.buildMessageContent()
-			m.messageViewport.SetContent(content)
-			m.messageViewport.GotoBottom()
+		// Store pagination metadata.
+		if msg.OldestCursor != nil {
+			m.cursorCache[msg.ThreadID] = *msg.OldestCursor
+		}
+		m.hasOlderCache[msg.ThreadID] = msg.HasOlder
+
+		if msg.IsOlderPage {
+			// Prepend older messages to existing cache.
+			existing := m.conversationCache[msg.ThreadID]
+			merged := make([]Message, 0, len(msg.Messages)+len(existing))
+			merged = append(merged, msg.Messages...)
+			merged = append(merged, existing...)
+			m.conversationCache[msg.ThreadID] = merged
+			m.loadingOlder = false
+
+			if m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID {
+				// Calculate how many lines the new messages add so we can preserve scroll position.
+				oldContent := m.buildMessageContent()
+				oldLines := strings.Count(oldContent, "\n")
+
+				m.activeMessages = merged
+				newContent := m.buildMessageContent()
+				newLines := strings.Count(newContent, "\n")
+
+				m.messageViewport.SetContent(newContent)
+				// Offset viewport by the number of prepended lines to preserve position.
+				addedLines := newLines - oldLines
+				if addedLines > 0 {
+					m.messageViewport.SetYOffset(addedLines)
+				}
+			}
+		} else {
+			// Initial load — replace cache and scroll to bottom.
+			m.conversationCache[msg.ThreadID] = msg.Messages
+			if m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID {
+				m.activeMessages = msg.Messages
+				content := m.buildMessageContent()
+				m.messageViewport.SetContent(content)
+				m.messageViewport.GotoBottom()
+			}
 		}
 		m.statusMsg = ""
 		return m, nil
@@ -73,6 +109,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MessageSentMsg:
 		if msg.Err != nil {
 			m.statusMsg = "Send failed: " + msg.Err.Error()
+		}
+		return m, nil
+
+	case LoginResultMsg:
+		if msg.Err != nil {
+			errMsg := msg.Err.Error()
+			if strings.Contains(errMsg, "password") || strings.Contains(errMsg, "bad_credentials") {
+				m.loginError = "Incorrect password. Please try again."
+			} else if strings.Contains(errMsg, "checkpoint") || strings.Contains(errMsg, "Challenge") {
+				m.loginError = "Checkpoint required — verify on your phone and retry."
+			} else if strings.Contains(errMsg, "two_factor") || strings.Contains(errMsg, "Two-factor") {
+				m.loginError = "Two-factor authentication required."
+			} else {
+				m.loginError = "Login failed: " + errMsg
+			}
+			m.loginStep = LoginStepUsername
+			m.usernameInput.Focus()
+			m.passwordInput.Blur()
+			m.statusMsg = ""
+			return m, nil
+		}
+		m.connected = true
+		m.username = msg.User.Username
+		m.mode = ModeNormal
+		m.loginError = ""
+		m.usernameInput.SetValue("")
+		m.passwordInput.SetValue("")
+		m.usernameInput.Blur()
+		m.passwordInput.Blur()
+		m.statusMsg = "Logged in"
+		if m.rpc != nil {
+			return m, fetchThreadsCmd(m.rpc)
 		}
 		return m, nil
 
@@ -86,6 +154,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearchMode(msg)
 		case ModeInsert:
 			return m.updateInsertMode(msg)
+		case ModeLogin:
+			return m.updateLoginMode(msg)
 		}
 	}
 
@@ -182,6 +252,10 @@ func (m Model) updateNormalConversation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.pendingG {
 			m.messageViewport.GotoTop()
 			m.pendingG = false
+			// Trigger load-older when reaching top
+			if cmd := m.loadOlderCmd(); cmd != nil {
+				return m, cmd
+			}
 		} else {
 			m.pendingG = true
 		}
@@ -192,6 +266,12 @@ func (m Model) updateNormalConversation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Forward to viewport for j/k scroll, u/d half-page, pgup/pgdn, etc.
 		var cmd tea.Cmd
 		m.messageViewport, cmd = m.messageViewport.Update(msg)
+		// Trigger load-older when scrolling to top
+		if m.messageViewport.AtTop() {
+			if olderCmd := m.loadOlderCmd(); olderCmd != nil {
+				return m, tea.Batch(cmd, olderCmd)
+			}
+		}
 		return m, cmd
 	}
 }
@@ -302,7 +382,7 @@ func (m Model) loadConversationCmd() (tea.Model, tea.Cmd) {
 	m.messageViewport.SetContent("Loading messages...")
 	m.statusMsg = "Loading messages..."
 	if m.rpc != nil {
-		return m, fetchMessagesCmd(m.rpc, m.activeThread.ThreadID)
+		return m, fetchMessagesCmd(m.rpc, m.activeThread.ThreadID, "", false)
 	}
 	return m, nil
 }
@@ -343,4 +423,74 @@ func (m *Model) filterThreads() {
 			}
 		}
 	}
+}
+
+// loadOlderCmd returns a command to fetch older messages if conditions are met.
+func (m *Model) loadOlderCmd() tea.Cmd {
+	if m.activeThread == nil || m.loadingOlder {
+		return nil
+	}
+	threadID := m.activeThread.ThreadID
+	if !m.hasOlderCache[threadID] {
+		return nil
+	}
+	cursor, ok := m.cursorCache[threadID]
+	if !ok || cursor == "" {
+		return nil
+	}
+	m.loadingOlder = true
+	return fetchMessagesCmd(m.rpc, threadID, cursor, true)
+}
+
+func (m Model) updateLoginMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		return m, tea.Quit
+
+	case "tab", "shift+tab":
+		if m.loginStep == LoginStepUsername {
+			m.loginStep = LoginStepPassword
+			m.usernameInput.Blur()
+			m.passwordInput.Focus()
+		} else {
+			m.loginStep = LoginStepUsername
+			m.passwordInput.Blur()
+			m.usernameInput.Focus()
+		}
+		return m, nil
+
+	case "enter":
+		if m.loginStep == LoginStepUsername {
+			if strings.TrimSpace(m.usernameInput.Value()) == "" {
+				m.loginError = "Username cannot be empty"
+				return m, nil
+			}
+			m.loginStep = LoginStepPassword
+			m.loginError = ""
+			m.usernameInput.Blur()
+			m.passwordInput.Focus()
+			return m, nil
+		}
+		// Password step — submit
+		if strings.TrimSpace(m.passwordInput.Value()) == "" {
+			m.loginError = "Password cannot be empty"
+			return m, nil
+		}
+		m.loginError = ""
+		m.statusMsg = "Logging in..."
+		m.passwordInput.Blur()
+		if m.rpc != nil {
+			return m, loginCmd(m.rpc, m.usernameInput.Value(), m.passwordInput.Value())
+		}
+		return m, nil
+	}
+
+	// Forward to active input
+	var cmd tea.Cmd
+	if m.loginStep == LoginStepUsername {
+		m.usernameInput, cmd = m.usernameInput.Update(msg)
+	} else {
+		m.passwordInput, cmd = m.passwordInput.Update(msg)
+	}
+	return m, cmd
 }

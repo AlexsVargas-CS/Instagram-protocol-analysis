@@ -23,6 +23,8 @@ func main() {
 	m.rpc = NewRPCClient(backend.Stdin, backend.Stdout)
 	m.statusMsg = "Connecting..."
 	m.conversationCache = make(map[string][]Message)
+	m.cursorCache = make(map[string]string)
+	m.hasOlderCache = make(map[string]bool)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 

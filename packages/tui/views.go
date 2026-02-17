@@ -75,6 +75,24 @@ var placeholderStyle = lipgloss.NewStyle().
 var searchBarStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("86")) // cyan
 
+// Login styles
+var loginBoxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("62")).
+	Padding(1, 3)
+
+var loginTitleStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("15")).
+	MarginBottom(1)
+
+var loginErrorStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("196")).
+	Bold(true)
+
+var loginLabelStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("252"))
+
 
 
 func (m Model) View() string {
@@ -82,23 +100,25 @@ func (m Model) View() string {
 	if m.height == 0 || m.width == 0 {
 		return "not yet rendered"
 	}  
-	//load header and stat bar 
-	header := m.renderHeader() // we will make 4 render functions later on 
+	//load header and stat bar
+	header := m.renderHeader()
 	statusBar := m.renderStatusBar()
 
-
-	bodyHeight := m.height - 2  
+	bodyHeight := m.height - 2
 
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
 
+	// Login mode — render login screen instead of split panels
+	if m.mode == ModeLogin {
+		loginBody := m.renderLoginScreen(m.width, bodyHeight)
+		return lipgloss.JoinVertical(lipgloss.Left, header, loginBody, statusBar)
+	}
+
 	leftWidth := m.width/3
 	rightWidth := m.width - leftWidth -1
 
- //render the panels
- //the left panel will render the threadList
- // The right will render the convo
 	leftPanel := m.renderThreadList(leftWidth, bodyHeight)
 	rightPanel := m.renderConversation(rightWidth, bodyHeight)
 
@@ -123,11 +143,9 @@ func (m Model) View() string {
 		Height(bodyHeight).
 		Render(rightPanel)
 
-
-//after we need to join them
 body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-return lipgloss.JoinVertical(lipgloss.Left ,header,body, statusBar)
+return lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)
 
 
 }
@@ -301,6 +319,46 @@ func (m Model) renderConversation(width, height int) string {
 	return b.String()
 }
 
+func (m Model) renderLoginScreen(width, height int) string {
+	var b strings.Builder
+
+	b.WriteString(loginTitleStyle.Render("Instagram Login"))
+	b.WriteString("\n\n")
+
+	// Username field
+	b.WriteString(loginLabelStyle.Render("Username:"))
+	b.WriteString("\n")
+	if m.loginStep == LoginStepUsername {
+		b.WriteString(m.usernameInput.View())
+	} else {
+		b.WriteString(loginLabelStyle.Render(m.usernameInput.Value()))
+	}
+	b.WriteString("\n\n")
+
+	// Password field
+	b.WriteString(loginLabelStyle.Render("Password:"))
+	b.WriteString("\n")
+	if m.loginStep == LoginStepPassword {
+		b.WriteString(m.passwordInput.View())
+	} else {
+		b.WriteString(loginLabelStyle.Render(strings.Repeat("*", len(m.passwordInput.Value()))))
+	}
+	b.WriteString("\n\n")
+
+	// Error message
+	if m.loginError != "" {
+		b.WriteString(loginErrorStyle.Render(m.loginError))
+		b.WriteString("\n\n")
+	}
+
+	// Hint
+	b.WriteString(placeholderStyle.Render("Enter: next/submit  Tab: switch field  Esc: quit"))
+
+	box := loginBoxStyle.Render(b.String())
+
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+}
+
 // buildMessageContent renders all messages into a string for the viewport.
 func (m Model) buildMessageContent() string {
 	if m.activeMessages == nil {
@@ -310,10 +368,29 @@ func (m Model) buildMessageContent() string {
 		return placeholderStyle.Render("No messages yet")
 	}
 
+	var b strings.Builder
+
+	// Pagination indicator at top
+	if m.activeThread != nil {
+		threadID := m.activeThread.ThreadID
+		if m.loadingOlder {
+			b.WriteString(placeholderStyle.Render("Loading older messages...") + "\n\n")
+		} else if !m.hasOlderCache[threadID] {
+			b.WriteString(placeholderStyle.Render("--- Beginning of conversation ---") + "\n\n")
+		}
+	}
+
+	b.WriteString(m.renderMessages(m.activeMessages))
+
+	return b.String()
+}
+
+// renderMessages renders a slice of messages into a string.
+func (m Model) renderMessages(messages []Message) string {
 	w := m.viewportWidth()
 	var b strings.Builder
 
-	for _, msg := range m.activeMessages {
+	for _, msg := range messages {
 		ts := formatTimestamp(msg.Timestamp)
 		isMe := msg.UserId == "me"
 
@@ -350,7 +427,7 @@ func (m Model) renderStatusBar() string {
 	switch m.mode {
 	case ModeNormal:
 		if m.focus == FocusConversation {
-			keys = "j/k: scroll  u/d: page  G: bottom  gg: top  h: threads  i: insert"
+			keys = "j/k: scroll  u/d: page  G: bottom  gg: top/older  h: threads  i: insert"
 		} else {
 			keys = "j/k: nav  l: chat  Enter: load  s: search  i: insert  q: quit"
 		}
@@ -358,6 +435,8 @@ func (m Model) renderStatusBar() string {
 		keys = "Type to filter  Enter: select  Esc: cancel"
 	case ModeInsert:
 		keys = "Type message  Enter: send  Esc: cancel"
+	case ModeLogin:
+		keys = "Enter: next/submit  Tab: switch field  Esc: quit"
 	}
 
 	// Show status message if present, otherwise show keybindings.

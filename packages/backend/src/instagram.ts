@@ -1,5 +1,5 @@
 import { IgApiClient, IgLoginBadPasswordError, IgCheckpointError, IgLoginTwoFactorRequiredError, IgLoginRequiredError } from 'instagram-private-api';
-import { User, Thread, Message, AuthenticationError, SessionError, InstagramAPIError } from './types';
+import { User, Thread, Message, GetMessagesResult, AuthenticationError, SessionError, InstagramAPIError } from './types';
 import * as fs from 'fs/promises';
 
 export class InstagramClient {
@@ -82,20 +82,20 @@ export class InstagramClient {
 		};
 	}
 	
-	async getMessages(thread_id: string, _cursor?: string): Promise<Message[]> {
+	async getMessages(thread_id: string, _cursor?: string): Promise<GetMessagesResult> {
 		try {
 			const feed = await this.ig.feed.directThread({thread_id,  oldest_cursor: _cursor ?? ''});
-			const items = await feed.items(); // this should return a array that contains the threads info
-		//with this raw thread we can now extract last_permanent_item
-		
-		//we then return a threads then map it using thread.last_perm after 
-		//we filter by checking that the item is not empty and finally map it to mapMessage
-		
-			 return items
-			.filter(item => item != null && item.text != null)
-			.map((item) => this.mapMessage(item));
-	
-		//throw new Error(`getMessages not yet implemented for thread ${thread_id}`)
+			const items = await feed.items();
+
+			const messages = items
+				.filter(item => item != null && item.text != null)
+				.map((item) => this.mapMessage(item));
+
+			return {
+				messages,
+				oldestCursor: feed.cursor || null,
+				hasOlder: feed.isMoreAvailable(),
+			};
 		}catch (error) {
 			if (error instanceof IgLoginRequiredError) {
 				throw new SessionError('Session expired: please log in again');
@@ -105,10 +105,6 @@ export class InstagramClient {
 				);
 			}
 		}
-		
-
-		
-	
 	}
 	
 
