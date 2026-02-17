@@ -1,6 +1,5 @@
 package main
 
-//Views is our "render fucntion that converts into str "
 import (
 	"fmt"
 	"strings"
@@ -12,11 +11,11 @@ import (
 //header bar style
 var headerStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("15")). // white
-	Background(lipgloss.Color("62")). // purple-ish
+	Foreground(lipgloss.Color("15")). 
+	Background(lipgloss.Color("62")). 
 	Padding(0, 1)
-//Thread list
 
+	//Thread lst
 var selectedThreadStyle = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(lipgloss.Color("15")).
@@ -42,12 +41,24 @@ var modeStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("62")). // purple
 	Padding(0, 1)
 
-//convo message style
-var messageStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("252")) 
+// convo message styles 
+var myMessageStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("15")). 
+	Background(lipgloss.Color("62")). 
+	Padding(0, 1)
+
+var theirMessageStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("252")). 
+	Background(lipgloss.Color("237")). 
+	Padding(0, 1)
 
 var timestampStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("240")) 
+	Foreground(lipgloss.Color("240"))
+
+var usernameStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("86")). 
+	Bold(true)
+	
 //Panel border left and right
 var leftPanelBaseStyle = lipgloss.NewStyle().
 	BorderRight(true).
@@ -71,15 +82,12 @@ func (m Model) View() string {
 	if m.height == 0 || m.width == 0 {
 		return "not yet rendered"
 	}  
-
-
 	//load header and stat bar 
-
 	header := m.renderHeader() // we will make 4 render functions later on 
 	statusBar := m.renderStatusBar()
 
 
-	bodyHeight := m.height - 2  // total height - header and statusBar
+	bodyHeight := m.height - 2  
 
 	if bodyHeight < 1 {
 		bodyHeight = 1
@@ -239,14 +247,32 @@ func (m Model) renderConversation(width, height int) string {
 		b.WriteString(placeholderStyle.Render("No messages yet"))
 	} else {
 		for _, msg := range m.activeMessages {
-			// Message text
-			b.WriteString(messageStyle.Render(msg.Text))
-			b.WriteString("\n")
-
-			// Timestamp — convert unix timestamp to readable format
 			ts := formatTimestamp(msg.Timestamp)
-			b.WriteString("  " + timestampStyle.Render(ts))
-			b.WriteString("\n\n")
+			isMe := msg.UserId == "me"
+
+			if isMe {
+				// Right-aligned: my messages
+				bubble := myMessageStyle.Render(msg.Text)
+				bubbleWidth := lipgloss.Width(bubble)
+				pad := width - bubbleWidth
+				if pad < 0 {
+					pad = 0
+				}
+				b.WriteString(strings.Repeat(" ", pad) + bubble + "\n")
+				// Right-align timestamp too
+				tsRendered := timestampStyle.Render(ts)
+				tsPad := width - lipgloss.Width(tsRendered)
+				if tsPad < 0 {
+					tsPad = 0
+				}
+				b.WriteString(strings.Repeat(" ", tsPad) + tsRendered + "\n\n")
+			} else {
+				// Left-aligned: their messages with username label
+				sender := usernameStyle.Render(getUsernameById(m.activeThread.Users, msg.UserId))
+				b.WriteString(sender + "\n")
+				b.WriteString(theirMessageStyle.Render(msg.Text) + "\n")
+				b.WriteString(timestampStyle.Render(ts) + "\n\n")
+			}
 		}
 	}
 
@@ -341,6 +367,16 @@ func formatTimestamp(ts int64) string {
 	}
 	return t.Format("Jan 2, 3:04 PM")
 	
+}
+
+// getUsernameById finds a username from the thread's user list by PK.
+func getUsernameById(users []User, userId string) string {
+	for _, u := range users {
+		if u.PK == userId {
+			return u.Username
+		}
+	}
+	return "unknown"
 }
 
 // truncate shortens a string to maxLen characters, adding "…" if truncated.

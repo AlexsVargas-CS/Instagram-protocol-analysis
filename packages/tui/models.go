@@ -54,46 +54,33 @@ type Message struct {
 
 type Model struct{
 	mode Mode  //our current input mode 
-	//teminal dimensions
 	width int 
 	height int
-	// connection/auth display in header bar
 	connected bool
 	username string
-	//View() checls err != nil errors in different color
 	statusMsg string
 	err error
 
 
-	//left Panel --> our k decerments, j incerments
 	threads []Thread
 	cursor int // our index of our highlighted thread
-	
-//one way latch--> so once true, remains true for the remainder session.
-
 
 	loaded bool	 //whether a convo has been loaded at least once
-	//false shows "Press Enter to load the convo"
-	
-	
 	// ------Search panel----
 
 	searchInput textinput.Model 
 
 	filteredIndices []int
 
-
-
-
 	//----right panel---
-	
 	activeThread *Thread // start Thread pointer at nil
-	//Messages for the active convo 
 	activeMessages []Message //populated by getMessages() repsonse from backend
 	
 	messageViewport viewport.Model //manages scroll pos
 
-	//----Right panel: convo----- 
+	conversationCache map[string][]Message
+
+	//----Right panel: convo-----
 	messageInput textinput.Model
 
 }
