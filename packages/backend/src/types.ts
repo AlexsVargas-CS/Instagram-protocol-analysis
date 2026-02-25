@@ -41,11 +41,12 @@ export interface User{
 	pk:string;
 }
 
-export interface Message{ 
+export interface Message{
+	itemId?: string;
 	text: string;
 	timestamp: number;
 	userId: string;
-	
+
 }
 
 export interface Thread {

@@ -43,7 +43,32 @@ type LoginResultMsg struct {
 // MessageSentMsg carries the result of a "sendMessage" RPC call.
 type MessageSentMsg struct {
 	ThreadID string
+	Message  *Message
 	Err      error
+}
+
+// NewMessageMsg carries a real-time incoming message from MQTT.
+type NewMessageMsg struct {
+	ThreadID string  `json:"threadId"`
+	Message  Message `json:"message"`
+}
+
+// MarkReadMsg carries the result of a "markRead" RPC call.
+type MarkReadMsg struct {
+	ThreadID string
+	Err      error
+}
+
+// ChallengeResultMsg carries the result of a "submitChallenge" RPC call.
+type ChallengeResultMsg struct {
+	User User
+	Err  error
+}
+
+// TwoFactorResultMsg carries the result of a "submitTwoFactor" RPC call.
+type TwoFactorResultMsg struct {
+	User User
+	Err  error
 }
 
 // ---------------------------------------------------------------------------
@@ -55,20 +80,28 @@ type MessageSentMsg struct {
 // keep the subscription alive.
 func listenForBackendEvents(rpc *RPCClient) tea.Cmd {
 	return func() tea.Msg {
-		evt := <-rpc.Events
+		for {
+			evt := <-rpc.Events
 
-		switch evt.Event {
-		case "sessionRestored":
-			var data SessionRestoredMsg
-			if err := json.Unmarshal(evt.Data, &data); err != nil {
-				return SessionRestoredMsg{Success: false}
+			switch evt.Event {
+			case "sessionRestored":
+				var data SessionRestoredMsg
+				if err := json.Unmarshal(evt.Data, &data); err != nil {
+					return SessionRestoredMsg{Success: false}
+				}
+				return data
+			case "__disconnected":
+				return BackendDisconnectedMsg{}
+			case "newMessage":
+				var data NewMessageMsg
+				if err := json.Unmarshal(evt.Data, &data); err != nil {
+					continue // skip malformed events
+				}
+				return data
+			default:
+				// Unknown event — loop back and keep listening.
+				continue
 			}
-			return data
-		case "__disconnected":
-			return BackendDisconnectedMsg{}
-		default:
-			// Unknown event — keep listening (will be re-issued from Update).
-			return nil
 		}
 	}
 }
@@ -118,11 +151,18 @@ func fetchMessagesCmd(rpc *RPCClient, threadID string, cursor string, isOlderPag
 // sendMessageCmd calls "sendMessage" on the backend.
 func sendMessageCmd(rpc *RPCClient, threadID, text string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := rpc.Send("sendMessage", map[string]interface{}{
+		result, err := rpc.Send("sendMessage", map[string]interface{}{
 			"thread_id": threadID,
 			"text":      text,
 		})
-		return MessageSentMsg{ThreadID: threadID, Err: err}
+		if err != nil {
+			return MessageSentMsg{ThreadID: threadID, Err: err}
+		}
+		var msg Message
+		if err := json.Unmarshal(result, &msg); err != nil {
+			return MessageSentMsg{ThreadID: threadID, Err: err}
+		}
+		return MessageSentMsg{ThreadID: threadID, Message: &msg}
 	}
 }
 
@@ -141,5 +181,50 @@ func loginCmd(rpc *RPCClient, username, password string) tea.Cmd {
 			return LoginResultMsg{Err: err}
 		}
 		return LoginResultMsg{User: user}
+	}
+}
+
+// markReadCmd calls "markRead" on the backend.
+func markReadCmd(rpc *RPCClient, threadID, itemID string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := rpc.Send("markRead", map[string]interface{}{
+			"thread_id": threadID,
+			"item_id":   itemID,
+		})
+		return MarkReadMsg{ThreadID: threadID, Err: err}
+	}
+}
+
+// submitChallengeCmd calls "submitChallenge" on the backend with the verification code.
+func submitChallengeCmd(rpc *RPCClient, code string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := rpc.Send("submitChallenge", map[string]interface{}{
+			"code": code,
+		})
+		if err != nil {
+			return ChallengeResultMsg{Err: err}
+		}
+		var user User
+		if err := json.Unmarshal(result, &user); err != nil {
+			return ChallengeResultMsg{Err: err}
+		}
+		return ChallengeResultMsg{User: user}
+	}
+}
+
+// submitTwoFactorCmd calls "submitTwoFactor" on the backend with the 2FA code.
+func submitTwoFactorCmd(rpc *RPCClient, code string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := rpc.Send("submitTwoFactor", map[string]interface{}{
+			"code": code,
+		})
+		if err != nil {
+			return TwoFactorResultMsg{Err: err}
+		}
+		var user User
+		if err := json.Unmarshal(result, &user); err != nil {
+			return TwoFactorResultMsg{Err: err}
+		}
+		return TwoFactorResultMsg{User: user}
 	}
 }

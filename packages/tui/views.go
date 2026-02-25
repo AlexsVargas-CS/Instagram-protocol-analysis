@@ -322,6 +322,95 @@ func (m Model) renderConversation(width, height int) string {
 func (m Model) renderLoginScreen(width, height int) string {
 	var b strings.Builder
 
+	// Browser fallback screen — shown when API challenge tiers failed.
+	if m.loginStep == LoginStepChallengeUrl {
+		b.WriteString(loginTitleStyle.Render("Manual Verification Required"))
+		b.WriteString("\n\n")
+
+		b.WriteString(loginLabelStyle.Render("Instagram requires verification that"))
+		b.WriteString("\n")
+		b.WriteString(loginLabelStyle.Render("could not be completed automatically."))
+		b.WriteString("\n\n")
+
+		b.WriteString(loginLabelStyle.Render("Open this URL in your browser:"))
+		b.WriteString("\n\n")
+
+		urlStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("86")).
+			Bold(true)
+		b.WriteString(urlStyle.Render(m.challengeUrl))
+		b.WriteString("\n\n")
+
+		b.WriteString(loginLabelStyle.Render("Complete the verification, then"))
+		b.WriteString("\n")
+		b.WriteString(loginLabelStyle.Render("press Enter to retry login."))
+		b.WriteString("\n\n")
+
+		if m.loginError != "" {
+			b.WriteString(loginErrorStyle.Render(m.loginError))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString(placeholderStyle.Render("Enter: retry login  Esc: quit"))
+
+		box := loginBoxStyle.Render(b.String())
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	}
+
+	// 2FA code entry screen — shown when account has authenticator/SMS 2FA.
+	if m.loginStep == LoginStepTwoFactor {
+		b.WriteString(loginTitleStyle.Render("Two-Factor Authentication"))
+		b.WriteString("\n\n")
+
+		hint := m.twoFactorHint
+		if hint == "" {
+			hint = "Enter your 2FA code"
+		}
+		b.WriteString(loginLabelStyle.Render(hint))
+		b.WriteString("\n\n")
+
+		b.WriteString(loginLabelStyle.Render("Code:"))
+		b.WriteString("\n")
+		b.WriteString(m.challengeInput.View())
+		b.WriteString("\n\n")
+
+		if m.loginError != "" {
+			b.WriteString(loginErrorStyle.Render(m.loginError))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString(placeholderStyle.Render("Enter: verify  Esc: quit"))
+
+		box := loginBoxStyle.Render(b.String())
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	}
+
+	// Challenge verification screen — shown after checkpoint is triggered.
+	if m.loginStep == LoginStepChallenge {
+		b.WriteString(loginTitleStyle.Render("Verify Your Identity"))
+		b.WriteString("\n\n")
+
+		hint := "Enter the verification code sent to " + m.challengeHint
+		b.WriteString(loginLabelStyle.Render(hint))
+		b.WriteString("\n\n")
+
+		b.WriteString(loginLabelStyle.Render("Verification Code:"))
+		b.WriteString("\n")
+		b.WriteString(m.challengeInput.View())
+		b.WriteString("\n\n")
+
+		if m.loginError != "" {
+			b.WriteString(loginErrorStyle.Render(m.loginError))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString(placeholderStyle.Render("Enter: verify  Esc: quit"))
+
+		box := loginBoxStyle.Render(b.String())
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	}
+
+	// Normal login screen — username / password entry.
 	b.WriteString(loginTitleStyle.Render("Instagram Login"))
 	b.WriteString("\n\n")
 
@@ -436,7 +525,13 @@ func (m Model) renderStatusBar() string {
 	case ModeInsert:
 		keys = "Type message  Enter: send  Esc: cancel"
 	case ModeLogin:
-		keys = "Enter: next/submit  Tab: switch field  Esc: quit"
+		if m.loginStep == LoginStepChallengeUrl {
+			keys = "Enter: retry login  Esc: quit"
+		} else if m.loginStep == LoginStepChallenge || m.loginStep == LoginStepTwoFactor {
+			keys = "Enter: verify  Esc: quit"
+		} else {
+			keys = "Enter: next/submit  Tab: switch field  Esc: quit"
+		}
 	}
 
 	// Show status message if present, otherwise show keybindings.

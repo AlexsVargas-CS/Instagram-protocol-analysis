@@ -94,8 +94,9 @@ async function handleRequest(req: Request): Promise<void> {
 	switch(req.method) {
 		case 'login':{
 			const username = (req.params.username as string) || process.env.IG_USERNAME;
-			const password = (req.params.password as string) || process.env.IG_PASSWORD; 
+			const password = (req.params.password as string) || process.env.IG_PASSWORD;
 			result = await client.login(username!, password!);
+			startRealtimeListener();
 			break;
 		}
 		case 'getThreads': {
@@ -112,13 +113,41 @@ async function handleRequest(req: Request): Promise<void> {
 		}
 		case 'sendMessage': {
 			result = await client.sendMessage(
-			req.params.thread_id as string, 
+			req.params.thread_id as string,
 			req.params.text as string,
 			);
-			break; 
+			break;
 		}
-		
-			default: 
+		case 'markRead': {
+			await client.markRead(
+				req.params.thread_id as string,
+				req.params.item_id as string,
+			);
+			result = {success: true};
+			break;
+		}
+		case 'submitChallenge': {
+			const code = req.params.code as string;
+			if (!code) {
+				sendError(req.id, -32602, 'Missing verification code');
+				return;
+			}
+			result = await client.submitChallengeCode(code);
+			startRealtimeListener();
+			break;
+		}
+		case 'submitTwoFactor': {
+			const code = req.params.code as string;
+			if (!code) {
+				sendError(req.id, -32602, 'Missing 2FA code');
+				return;
+			}
+			result = await client.submitTwoFactorCode(code);
+			startRealtimeListener();
+			break;
+		}
+
+			default:
 			sendError(req.id, -32601, `Method not found: ${req.method}`);
 			return; 
 		}
@@ -141,10 +170,18 @@ async function handleRequest(req: Request): Promise<void> {
 
 
 
+function startRealtimeListener(): void {
+	client.startRealtime((threadId, message) => {
+		sendEvent('newMessage', { threadId, message });
+	});
+}
+
 async function init(): Promise<void> {
 	const restored = await client.loadSession();
 	sendEvent('sessionRestored', {success: restored});
-	
+	if (restored) {
+		startRealtimeListener();
+	}
 }
 
 init();

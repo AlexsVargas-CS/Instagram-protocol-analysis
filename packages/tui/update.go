@@ -78,17 +78,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadingOlder = false
 
 			if m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID {
-				// Calculate how many lines the new messages add so we can preserve scroll position.
-				oldContent := m.buildMessageContent()
-				oldLines := strings.Count(oldContent, "\n")
-
 				m.activeMessages = merged
+				prependedContent := m.renderMessages(msg.Messages)
+				addedLines := strings.Count(prependedContent, "\n")
 				newContent := m.buildMessageContent()
-				newLines := strings.Count(newContent, "\n")
-
 				m.messageViewport.SetContent(newContent)
-				// Offset viewport by the number of prepended lines to preserve position.
-				addedLines := newLines - oldLines
 				if addedLines > 0 {
 					m.messageViewport.SetYOffset(addedLines)
 				}
@@ -101,6 +95,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content := m.buildMessageContent()
 				m.messageViewport.SetContent(content)
 				m.messageViewport.GotoBottom()
+				// Mark latest message as read.
+				if m.rpc != nil && m.activeThread.UnreadCount > 0 && len(msg.Messages) > 0 {
+					lastMsg := msg.Messages[len(msg.Messages)-1]
+					if lastMsg.ItemId != "" {
+						m.statusMsg = ""
+						return m, markReadCmd(m.rpc, m.activeThread.ThreadID, lastMsg.ItemId)
+					}
+				}
 			}
 		}
 		m.statusMsg = ""
@@ -112,13 +114,109 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case MarkReadMsg:
+		if msg.Err == nil {
+			// Zero out unread count in the thread list.
+			for i := range m.threads {
+				if m.threads[i].ThreadID == msg.ThreadID {
+					m.threads[i].UnreadCount = 0
+					break
+				}
+			}
+		}
+		return m, nil
+
+	case NewMessageMsg:
+		// Append to conversation cache.
+		if existing, ok := m.conversationCache[msg.ThreadID]; ok {
+			m.conversationCache[msg.ThreadID] = append(existing, msg.Message)
+		}
+
+		// Update thread list: LastMessage and UnreadCount.
+		viewingThis := m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID
+		for i := range m.threads {
+			if m.threads[i].ThreadID == msg.ThreadID {
+				m.threads[i].LastMessage = msg.Message
+				if !viewingThis {
+					m.threads[i].UnreadCount++
+				}
+				break
+			}
+		}
+
+		// If currently viewing this thread, update the viewport.
+		if viewingThis {
+			m.activeMessages = m.conversationCache[msg.ThreadID]
+			atBottom := m.messageViewport.AtBottom()
+			content := m.buildMessageContent()
+			m.messageViewport.SetContent(content)
+			if atBottom {
+				m.messageViewport.GotoBottom()
+			}
+		}
+
+		// Re-issue the event listener.
+		if m.rpc != nil {
+			return m, listenForBackendEvents(m.rpc)
+		}
+		return m, nil
+
 	case LoginResultMsg:
 		if msg.Err != nil {
 			errMsg := msg.Err.Error()
+
+			// Check if the backend triggered a challenge and sent a code.
+			// The error message will contain "Verification code sent to <contact>".
+			if strings.Contains(errMsg, "Verification code sent") {
+				m.loginStep = LoginStepChallenge
+				// Extract the masked contact point (e.g. "a***@g***.com")
+				if idx := strings.Index(errMsg, "sent to "); idx != -1 {
+					m.challengeHint = errMsg[idx+len("sent to "):]
+				} else {
+					m.challengeHint = "your phone or email"
+				}
+				m.challengeInput.SetValue("")
+				m.challengeInput.Focus()
+				m.passwordInput.Blur()
+				m.loginError = ""
+				m.statusMsg = ""
+				return m, nil
+			}
+
+			// Check if the backend fell back to a browser challenge URL.
+			// RPC wraps the error as "rpc error -32001: challenge_url:https://..."
+			if idx := strings.Index(errMsg, "challenge_url:"); idx != -1 {
+				m.challengeUrl = errMsg[idx+len("challenge_url:"):]
+				m.loginStep = LoginStepChallengeUrl
+				m.passwordInput.Blur()
+				m.loginError = ""
+				m.statusMsg = ""
+				return m, nil
+			}
+
+			// Detect 2FA requirement.
+			// Error format: "rpc error -32001: two_factor:totp:Enter code from your authenticator app"
+			if idx := strings.Index(errMsg, "two_factor:"); idx != -1 {
+				payload := errMsg[idx+len("two_factor:"):]
+				// payload is "totp:Enter code from..." or "sms:Enter SMS code..."
+				if hintIdx := strings.Index(payload, ":"); hintIdx != -1 {
+					m.twoFactorHint = payload[hintIdx+1:]
+				} else {
+					m.twoFactorHint = "Enter your 2FA code"
+				}
+				m.loginStep = LoginStepTwoFactor
+				m.challengeInput.SetValue("")
+				m.challengeInput.Focus()
+				m.passwordInput.Blur()
+				m.loginError = ""
+				m.statusMsg = ""
+				return m, nil
+			}
+
 			if strings.Contains(errMsg, "password") || strings.Contains(errMsg, "bad_credentials") {
 				m.loginError = "Incorrect password. Please try again."
 			} else if strings.Contains(errMsg, "checkpoint") || strings.Contains(errMsg, "Challenge") {
-				m.loginError = "Checkpoint required — verify on your phone and retry."
+				m.loginError = "Checkpoint required but could not send code. Try again."
 			} else if strings.Contains(errMsg, "two_factor") || strings.Contains(errMsg, "Two-factor") {
 				m.loginError = "Two-factor authentication required."
 			} else {
@@ -134,10 +232,70 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.username = msg.User.Username
 		m.mode = ModeNormal
 		m.loginError = ""
+		m.challengeUrl = ""
 		m.usernameInput.SetValue("")
 		m.passwordInput.SetValue("")
 		m.usernameInput.Blur()
 		m.passwordInput.Blur()
+		m.statusMsg = "Logged in"
+		if m.rpc != nil {
+			// Don't re-issue listenForBackendEvents — it's already running
+			// from the SessionRestoredMsg handler.
+			return m, fetchThreadsCmd(m.rpc)
+		}
+		return m, nil
+
+	case ChallengeResultMsg:
+		if msg.Err != nil {
+			m.loginError = "Verification failed: " + msg.Err.Error()
+			m.challengeInput.SetValue("")
+			m.challengeInput.Focus()
+			m.statusMsg = ""
+			return m, nil
+		}
+		// Challenge succeeded — user is logged in.
+		m.connected = true
+		m.username = msg.User.Username
+		m.mode = ModeNormal
+		m.loginError = ""
+		m.loginStep = LoginStepUsername
+		m.challengeUrl = ""
+		m.usernameInput.SetValue("")
+		m.passwordInput.SetValue("")
+		m.challengeInput.SetValue("")
+		m.challengeHint = ""
+		m.usernameInput.Blur()
+		m.passwordInput.Blur()
+		m.challengeInput.Blur()
+		m.statusMsg = "Logged in"
+		if m.rpc != nil {
+			// Don't re-issue listenForBackendEvents — it's already running.
+			return m, fetchThreadsCmd(m.rpc)
+		}
+		return m, nil
+
+	case TwoFactorResultMsg:
+		if msg.Err != nil {
+			m.loginError = "2FA verification failed: " + msg.Err.Error()
+			m.challengeInput.SetValue("")
+			m.challengeInput.Focus()
+			m.statusMsg = ""
+			return m, nil
+		}
+		// 2FA succeeded — user is logged in.
+		m.connected = true
+		m.username = msg.User.Username
+		m.mode = ModeNormal
+		m.loginError = ""
+		m.loginStep = LoginStepUsername
+		m.twoFactorHint = ""
+		m.challengeUrl = ""
+		m.usernameInput.SetValue("")
+		m.passwordInput.SetValue("")
+		m.challengeInput.SetValue("")
+		m.usernameInput.Blur()
+		m.passwordInput.Blur()
+		m.challengeInput.Blur()
 		m.statusMsg = "Logged in"
 		if m.rpc != nil {
 			return m, fetchThreadsCmd(m.rpc)
@@ -336,6 +494,7 @@ func (m Model) updateInsertMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				UserId:    "me",
 			}
 			m.activeMessages = append(m.activeMessages, newMsg)
+			m.conversationCache[m.activeThread.ThreadID] = m.activeMessages
 			m.messageInput.SetValue("")
 
 			// Update viewport with new message.
@@ -374,6 +533,13 @@ func (m Model) loadConversationCmd() (tea.Model, tea.Cmd) {
 		content := m.buildMessageContent()
 		m.messageViewport.SetContent(content)
 		m.messageViewport.GotoBottom()
+		// Mark the latest message as read if there are unread messages.
+		if m.rpc != nil && m.activeThread.UnreadCount > 0 && len(msgs) > 0 {
+			lastMsg := msgs[len(msgs)-1]
+			if lastMsg.ItemId != "" {
+				return m, markReadCmd(m.rpc, m.activeThread.ThreadID, lastMsg.ItemId)
+			}
+		}
 		return m, nil
 	}
 
@@ -448,6 +614,10 @@ func (m Model) updateLoginMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "tab", "shift+tab":
+		// No field switching during challenge, URL, or 2FA steps.
+		if m.loginStep == LoginStepChallenge || m.loginStep == LoginStepChallengeUrl || m.loginStep == LoginStepTwoFactor {
+			return m, nil
+		}
 		if m.loginStep == LoginStepUsername {
 			m.loginStep = LoginStepPassword
 			m.usernameInput.Blur()
@@ -471,26 +641,71 @@ func (m Model) updateLoginMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.passwordInput.Focus()
 			return m, nil
 		}
-		// Password step — submit
-		if strings.TrimSpace(m.passwordInput.Value()) == "" {
-			m.loginError = "Password cannot be empty"
+		if m.loginStep == LoginStepPassword {
+			if strings.TrimSpace(m.passwordInput.Value()) == "" {
+				m.loginError = "Password cannot be empty"
+				return m, nil
+			}
+			m.loginError = ""
+			m.statusMsg = "Logging in..."
+			m.passwordInput.Blur()
+			if m.rpc != nil {
+				return m, loginCmd(m.rpc, m.usernameInput.Value(), m.passwordInput.Value())
+			}
 			return m, nil
 		}
-		m.loginError = ""
-		m.statusMsg = "Logging in..."
-		m.passwordInput.Blur()
-		if m.rpc != nil {
-			return m, loginCmd(m.rpc, m.usernameInput.Value(), m.passwordInput.Value())
+		if m.loginStep == LoginStepChallenge {
+			code := strings.TrimSpace(m.challengeInput.Value())
+			if code == "" {
+				m.loginError = "Verification code cannot be empty"
+				return m, nil
+			}
+			m.loginError = ""
+			m.statusMsg = "Verifying..."
+			m.challengeInput.Blur()
+			if m.rpc != nil {
+				return m, submitChallengeCmd(m.rpc, code)
+			}
+			return m, nil
+		}
+		if m.loginStep == LoginStepChallengeUrl {
+			// Retry login after user completes browser verification.
+			m.loginError = ""
+			m.statusMsg = "Retrying login..."
+			if m.rpc != nil {
+				return m, loginCmd(m.rpc, m.usernameInput.Value(), m.passwordInput.Value())
+			}
+			return m, nil
+		}
+		if m.loginStep == LoginStepTwoFactor {
+			code := strings.TrimSpace(m.challengeInput.Value())
+			if code == "" {
+				m.loginError = "2FA code cannot be empty"
+				return m, nil
+			}
+			m.loginError = ""
+			m.statusMsg = "Verifying 2FA..."
+			m.challengeInput.Blur()
+			if m.rpc != nil {
+				return m, submitTwoFactorCmd(m.rpc, code)
+			}
+			return m, nil
 		}
 		return m, nil
 	}
 
-	// Forward to active input
+	// Forward to active input (no input for URL step).
+	if m.loginStep == LoginStepChallengeUrl {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	if m.loginStep == LoginStepUsername {
 		m.usernameInput, cmd = m.usernameInput.Update(msg)
-	} else {
+	} else if m.loginStep == LoginStepPassword {
 		m.passwordInput, cmd = m.passwordInput.Update(msg)
+	} else {
+		// LoginStepChallenge and LoginStepTwoFactor both use challengeInput.
+		m.challengeInput, cmd = m.challengeInput.Update(msg)
 	}
 	return m, cmd
 }

@@ -43,6 +43,9 @@ type LoginStep int
 const (
 	LoginStepUsername LoginStep = iota
 	LoginStepPassword
+	LoginStepChallenge
+	LoginStepChallengeUrl
+	LoginStepTwoFactor
 )
 
 type User struct {
@@ -60,9 +63,10 @@ type Thread struct {
 }
 
 type Message struct {
+	ItemId    string `json:"itemId,omitempty"`
 	Text      string `json:"text"`
 	Timestamp int64  `json:"timestamp"`
-	UserId string `json:"userId"`
+	UserId    string `json:"userId"`
 }
 
 type GetMessagesResult struct {
@@ -109,10 +113,14 @@ type Model struct {
 	loadingOlder  bool              // request in flight
 
 	// Login
-	loginStep     LoginStep
-	usernameInput textinput.Model
-	passwordInput textinput.Model
-	loginError    string
+	loginStep      LoginStep
+	usernameInput  textinput.Model
+	passwordInput  textinput.Model
+	challengeInput textinput.Model
+	challengeHint  string // masked contact point, e.g. "a***@g***.com"
+	challengeUrl   string // browser fallback URL for manual verification
+	twoFactorHint  string // e.g. "Enter code from your authenticator app"
+	loginError     string
 }
 
 const conversationHeaderHeight = 2 // @name + separator
@@ -153,6 +161,10 @@ func InitialModel() Model {
 	passwordInput.EchoMode = textinput.EchoPassword
 	passwordInput.EchoCharacter = '*'
 
+	challengeInput := textinput.New()
+	challengeInput.Placeholder = "6-digit code"
+	challengeInput.CharLimit = 10
+
 	return Model{
 		mode:            ModeNormal,
 		searchInput:     searchInput,
@@ -160,6 +172,7 @@ func InitialModel() Model {
 		messageViewport: vp,
 		usernameInput:   usernameInput,
 		passwordInput:   passwordInput,
+		challengeInput:  challengeInput,
 	}
 }
 
