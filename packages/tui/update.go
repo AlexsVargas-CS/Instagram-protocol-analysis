@@ -52,7 +52,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Failed to load threads: " + msg.Err.Error()
 			return m, nil
 		}
+		// Remember which thread was active before replacing the list.
+		var activeThreadID string
+		if m.activeThread != nil {
+			activeThreadID = m.activeThread.ThreadID
+		}
+
 		m.threads = msg.Threads
+
+		// Clamp cursor to new list bounds.
+		if len(m.threads) == 0 {
+			m.cursor = 0
+		} else if m.cursor >= len(m.threads) {
+			m.cursor = len(m.threads) - 1
+		}
+
+		// Re-establish activeThread pointer by matching ThreadID.
+		if activeThreadID != "" {
+			m.activeThread = nil
+			for i := range m.threads {
+				if m.threads[i].ThreadID == activeThreadID {
+					m.activeThread = &m.threads[i]
+					break
+				}
+			}
+		}
+
 		m.statusMsg = "Threads loaded"
 		return m, nil
 
@@ -127,20 +152,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case NewMessageMsg:
-		// Append to conversation cache.
+		// Bug 10 fix: if thread isn't in cache, create a new entry instead of dropping.
 		if existing, ok := m.conversationCache[msg.ThreadID]; ok {
 			m.conversationCache[msg.ThreadID] = append(existing, msg.Message)
+		} else {
+			if m.conversationCache == nil {
+				m.conversationCache = make(map[string][]Message)
+			}
+			m.conversationCache[msg.ThreadID] = []Message{msg.Message}
 		}
 
-		// Update thread list: LastMessage and UnreadCount.
+		// Update thread list: LastMessage, UnreadCount, LastActivityAt.
 		viewingThis := m.activeThread != nil && m.activeThread.ThreadID == msg.ThreadID
+		threadIdx := -1
 		for i := range m.threads {
 			if m.threads[i].ThreadID == msg.ThreadID {
 				m.threads[i].LastMessage = msg.Message
+				m.threads[i].LastActivityAt = msg.Message.Timestamp
 				if !viewingThis {
 					m.threads[i].UnreadCount++
 				}
+				threadIdx = i
 				break
+			}
+		}
+
+		// Bug 3 fix: bubble the thread to position 0 if it's not already there.
+		if threadIdx > 0 {
+			thread := m.threads[threadIdx]
+			copy(m.threads[1:threadIdx+1], m.threads[0:threadIdx])
+			m.threads[0] = thread
+
+			// Adjust cursor to track the user's selected thread through the reorder.
+			if m.cursor == threadIdx {
+				m.cursor = 0
+			} else if m.cursor < threadIdx {
+				m.cursor++
+			}
+
+			// Re-establish activeThread pointer after slice mutation.
+			if m.activeThread != nil {
+				for i := range m.threads {
+					if m.threads[i].ThreadID == m.activeThread.ThreadID {
+						m.activeThread = &m.threads[i]
+						break
+					}
+				}
 			}
 		}
 
@@ -156,6 +213,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Re-issue the event listener.
+		if m.rpc != nil {
+			return m, listenForBackendEvents(m.rpc)
+		}
+		return m, nil
+
+	case RealtimeErrorMsg:
+		m.statusMsg = "Realtime: " + msg.Error
 		if m.rpc != nil {
 			return m, listenForBackendEvents(m.rpc)
 		}
@@ -215,8 +279,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if strings.Contains(errMsg, "password") || strings.Contains(errMsg, "bad_credentials") {
 				m.loginError = "Incorrect password. Please try again."
-			} else if strings.Contains(errMsg, "checkpoint") || strings.Contains(errMsg, "Challenge") {
-				m.loginError = "Checkpoint required but could not send code. Try again."
+			} else if strings.Contains(errMsg, "checkpoint") || strings.Contains(errMsg, "challenge") || strings.Contains(errMsg, "Challenge") {
+				m.loginError = "Checkpoint required. Try deleting session.json and retrying, or check stderr for details."
 			} else if strings.Contains(errMsg, "two_factor") || strings.Contains(errMsg, "Two-factor") {
 				m.loginError = "Two-factor authentication required."
 			} else {
@@ -369,6 +433,7 @@ func (m Model) updateNormalThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "s":
 		m.mode = ModeSearch
+		m.preSearchCursor = m.cursor
 		m.searchInput.Focus()
 		m.cursor = 0
 		return m, nil
@@ -442,7 +507,11 @@ func (m Model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Blur()
 		m.searchInput.SetValue("")
 		m.filteredIndices = nil
-		m.cursor = 0
+		// Restore cursor to pre-search position, clamped to bounds.
+		m.cursor = m.preSearchCursor
+		if m.cursor >= len(m.threads) {
+			m.cursor = max(0, len(m.threads)-1)
+		}
 		return m, nil
 
 	case "enter":

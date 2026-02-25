@@ -100,7 +100,7 @@ async function handleRequest(req: Request): Promise<void> {
 			break;
 		}
 		case 'getThreads': {
-			result = await client.getThreads();
+			result = await client.getThreads(req.params.cursor as string | undefined);
 			break;
 		}
 		case 'getMessages': {
@@ -171,9 +171,14 @@ async function handleRequest(req: Request): Promise<void> {
 
 
 function startRealtimeListener(): void {
-	client.startRealtime((threadId, message) => {
-		sendEvent('newMessage', { threadId, message });
-	});
+	client.startRealtime(
+		(threadId, message) => {
+			sendEvent('newMessage', { threadId, message });
+		},
+		(error) => {
+			sendEvent('realtimeError', { error });
+		},
+	);
 }
 
 async function init(): Promise<void> {

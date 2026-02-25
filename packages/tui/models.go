@@ -75,6 +75,12 @@ type GetMessagesResult struct {
 	HasOlder     bool      `json:"hasOlder"`
 }
 
+type GetThreadsResult struct {
+	Threads      []Thread `json:"threads"`
+	OldestCursor *string  `json:"oldestCursor"`
+	HasOlder     bool     `json:"hasOlder"`
+}
+
 type Model struct {
 	mode      Mode
 	focus     FocusPanel
@@ -97,8 +103,9 @@ type Model struct {
 	loaded bool // whether a convo has been loaded at least once
 
 	// Search panel
-	searchInput     textinput.Model
-	filteredIndices []int
+	searchInput      textinput.Model
+	filteredIndices  []int
+	preSearchCursor  int
 
 	// Right panel — conversation
 	activeThread      *Thread

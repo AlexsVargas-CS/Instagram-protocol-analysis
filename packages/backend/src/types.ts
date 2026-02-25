@@ -63,3 +63,9 @@ export interface GetMessagesResult {
   oldestCursor: string | null;
   hasOlder: boolean;
 }
+
+export interface GetThreadsResult {
+  threads: Thread[];
+  oldestCursor: string | null;
+  hasOlder: boolean;
+}

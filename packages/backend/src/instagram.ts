@@ -1,6 +1,6 @@
 import { IgApiClient, IgLoginBadPasswordError, IgCheckpointError, IgLoginTwoFactorRequiredError, IgLoginRequiredError } from 'instagram-private-api';
 import { withRealtime, IgApiClientRealtime, GraphQLSubscriptions, SkywalkerSubscriptions } from 'instagram_mqtt';
-import { User, Thread, Message, GetMessagesResult, AuthenticationError, SessionError, InstagramAPIError } from './types';
+import { User, Thread, Message, GetMessagesResult, GetThreadsResult, AuthenticationError, SessionError, InstagramAPIError } from './types';
 import * as fs from 'fs/promises';
 
 export class InstagramClient {
@@ -47,7 +47,7 @@ export class InstagramClient {
 				// Instagram requires identity verification.
 				// Call challenge.auto(true) to send a verification code to the user.
 				const checkpointWebUrl = error.url;
-				process.stderr.write(`[challenge] Checkpoint triggered. Web URL: ${checkpointWebUrl}\n`);
+				process.stderr.write(`[challenge] IgCheckpointError path. Web URL: ${checkpointWebUrl}\n`);
 
 				try {
 					await this.ig.challenge.auto(true);
@@ -89,6 +89,43 @@ export class InstagramClient {
 				);
 			}
 			else {
+				// Fallback: instagram-private-api only recognizes "challenge_required"
+				// but Instagram may also send "checkpoint_required". Detect it from
+				// the raw response body and attempt the challenge flow.
+				const resp = (error as any)?.response?.body;
+				const bodyMsg = resp?.message ?? '';
+				if (
+					bodyMsg === 'checkpoint_required' ||
+					bodyMsg === 'challenge_required' ||
+					resp?.checkpoint_url ||
+					resp?.challenge
+				) {
+					process.stderr.write(`[challenge] Fallback checkpoint path (raw response message=${bodyMsg})\n`);
+					// Manually set checkpoint state so challenge.auto() can use it.
+					(this.ig.state as any).checkpoint = resp;
+					const challengeUrl =
+						resp?.challenge?.url ??
+						resp?.checkpoint_url ??
+						'https://www.instagram.com/challenge/';
+
+					try {
+						await this.ig.challenge.auto(true);
+						const checkpoint: any = this.ig.state.checkpoint;
+						const contact = checkpoint?.step_data?.contact_point ?? 'your phone or email';
+						process.stderr.write(`[challenge] Code sent to: ${contact}\n`);
+						throw new AuthenticationError(
+							`Verification code sent to ${contact}`,
+							'checkpoint_required',
+						);
+					} catch (challengeErr) {
+						if (challengeErr instanceof AuthenticationError) throw challengeErr;
+						process.stderr.write(`[challenge] auto() failed: ${challengeErr instanceof Error ? challengeErr.message : challengeErr}\n`);
+						throw new AuthenticationError(
+							`challenge_url:${challengeUrl}`,
+							'checkpoint_required',
+						);
+					}
+				}
 				throw new InstagramAPIError(
 					error instanceof Error ? error.message : 'Login failed',
 				);
@@ -282,7 +319,10 @@ export class InstagramClient {
 		}
 	}
 
-	async startRealtime(onMessage: (threadId: string, message: Message) => void): Promise<void> {
+	async startRealtime(
+		onMessage: (threadId: string, message: Message) => void,
+		onError?: (error: string) => void,
+	): Promise<void> {
 		try {
 			// Fetch inbox to get seq_id for proper iris subscription.
 			const inbox = await this.ig.feed.directInbox().request();
@@ -302,6 +342,11 @@ export class InstagramClient {
 			});
 			this.igRt.realtime.on('error', (err) => {
 				process.stderr.write(`Realtime error: ${err.message}\n`);
+				onError?.(err.message);
+			});
+			this.igRt.realtime.on('close', () => {
+				process.stderr.write(`Realtime connection closed\n`);
+				onError?.('Realtime connection closed');
 			});
 			await this.igRt.realtime.connect({
 				graphQlSubs: [
@@ -361,8 +406,8 @@ export class InstagramClient {
 			thread_id : String(r.thread_id ?? ''),
 			users: users,
 			lastMessage : last_perm_item,
-			unreadCount: 0,
-			lastActivityAt: 0,
+			unreadCount: Number((r as any).read_state ?? 0),
+			lastActivityAt: Number(r.last_activity_at ?? 0),
 			is_group: Boolean(r.is_group ?? false),
 		};
 		
@@ -370,24 +415,29 @@ export class InstagramClient {
 	}
 	
 	
-	async getThreads(): Promise<Thread[]> {
+	async getThreads(cursor?: string): Promise<GetThreadsResult> {
 		try{
-			const feed = await this.ig.feed.directInbox();
+			const feed = this.ig.feed.directInbox();
+			if (cursor) {
+				// cursor is private — use type assertion to set it for pagination.
+				(feed as any).cursor = cursor;
+			}
 			const raw_Thread = await feed.items();
-			return raw_Thread.map((thread) => this.mapThread(thread)); 
+			return {
+				threads: raw_Thread.map((thread) => this.mapThread(thread)),
+				oldestCursor: (feed as any).cursor || null,
+				hasOlder: feed.isMoreAvailable(),
+			};
 		} catch (error) {
 			if (error instanceof IgLoginRequiredError) {
 				throw new SessionError('Session expired — please log in again');
-			} 
+			}
 			else{
 				throw new InstagramAPIError(
 					error instanceof Error ? error.message : 'Failed to fetch threads',
 				);
 			}
-		} 
-		
-		
-		
+		}
 	}
 	
 	

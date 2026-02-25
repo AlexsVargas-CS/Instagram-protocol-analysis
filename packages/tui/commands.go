@@ -20,8 +20,10 @@ type BackendDisconnectedMsg struct{}
 
 // ThreadsLoadedMsg carries the result of a "getThreads" RPC call.
 type ThreadsLoadedMsg struct {
-	Threads []Thread
-	Err     error
+	Threads      []Thread
+	OldestCursor *string
+	HasOlder     bool
+	Err          error
 }
 
 // MessagesLoadedMsg carries the result of a "getMessages" RPC call.
@@ -57,6 +59,11 @@ type NewMessageMsg struct {
 type MarkReadMsg struct {
 	ThreadID string
 	Err      error
+}
+
+// RealtimeErrorMsg carries an error from the MQTT realtime connection.
+type RealtimeErrorMsg struct {
+	Error string `json:"error"`
 }
 
 // ChallengeResultMsg carries the result of a "submitChallenge" RPC call.
@@ -98,6 +105,12 @@ func listenForBackendEvents(rpc *RPCClient) tea.Cmd {
 					continue // skip malformed events
 				}
 				return data
+			case "realtimeError":
+				var data RealtimeErrorMsg
+				if err := json.Unmarshal(evt.Data, &data); err != nil {
+					continue
+				}
+				return data
 			default:
 				// Unknown event — loop back and keep listening.
 				continue
@@ -113,11 +126,15 @@ func fetchThreadsCmd(rpc *RPCClient) tea.Cmd {
 		if err != nil {
 			return ThreadsLoadedMsg{Err: err}
 		}
-		var threads []Thread
-		if err := json.Unmarshal(result, &threads); err != nil {
+		var parsed GetThreadsResult
+		if err := json.Unmarshal(result, &parsed); err != nil {
 			return ThreadsLoadedMsg{Err: err}
 		}
-		return ThreadsLoadedMsg{Threads: threads}
+		return ThreadsLoadedMsg{
+			Threads:      parsed.Threads,
+			OldestCursor: parsed.OldestCursor,
+			HasOlder:     parsed.HasOlder,
+		}
 	}
 }
 

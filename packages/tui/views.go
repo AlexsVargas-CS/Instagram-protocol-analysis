@@ -229,7 +229,11 @@ func (m Model) renderThreadList(width, height int) string {
 			maxNameWidth = 4
 		}
 		if lipgloss.Width(displayName) > maxNameWidth {
-			displayName = displayName[:maxNameWidth-1] + "…"
+			runes := []rune(displayName)
+			for len(runes) > 0 && lipgloss.Width(string(runes))+1 > maxNameWidth {
+				runes = runes[:len(runes)-1]
+			}
+			displayName = string(runes) + "…"
 		}
 
 		// Unread badge
@@ -620,7 +624,8 @@ func getUsernameById(users []User, userId string) string {
 	return "unknown"
 }
 
-// truncate shortens a string to maxLen characters, adding "…" if truncated.
+// truncate shortens a string to maxLen display width, adding "…" if truncated.
+// Uses rune slicing to avoid corrupting multi-byte UTF-8 characters.
 func truncate(s string, maxLen int) string {
 	if maxLen < 4 {
 		maxLen = 4
@@ -628,8 +633,9 @@ func truncate(s string, maxLen int) string {
 	if lipgloss.Width(s) <= maxLen {
 		return s
 	}
-	if len(s) > maxLen-1 {
-		return s[:maxLen-1] + "…"
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > maxLen {
+		runes = runes[:len(runes)-1]
 	}
-	return s
+	return string(runes) + "…"
 }
