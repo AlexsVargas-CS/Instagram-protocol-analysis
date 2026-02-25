@@ -12,7 +12,8 @@ import (
 
 // SessionRestoredMsg is sent when the backend emits "sessionRestored".
 type SessionRestoredMsg struct {
-	Success bool `json:"success"`
+	Success bool  `json:"success"`
+	User    *User `json:"user,omitempty"`
 }
 
 // BackendDisconnectedMsg is sent when the backend process exits.

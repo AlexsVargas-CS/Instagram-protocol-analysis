@@ -25,6 +25,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionRestoredMsg:
 		m.connected = msg.Success
+		if msg.User != nil {
+			m.userPK = msg.User.PK
+			m.username = msg.User.Username
+		}
 		var cmds []tea.Cmd
 		if m.rpc != nil {
 			cmds = append(cmds, listenForBackendEvents(m.rpc))
@@ -59,6 +63,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.threads = msg.Threads
+
+		// Deduplicate threads by ThreadID (Instagram API can return duplicates).
+		seen := make(map[string]bool)
+		deduped := m.threads[:0]
+		for _, t := range m.threads {
+			if !seen[t.ThreadID] {
+				seen[t.ThreadID] = true
+				deduped = append(deduped, t)
+			}
+		}
+		m.threads = deduped
 
 		// Clamp cursor to new list bounds.
 		if len(m.threads) == 0 {
@@ -294,6 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.connected = true
 		m.username = msg.User.Username
+		m.userPK = msg.User.PK
 		m.mode = ModeNormal
 		m.loginError = ""
 		m.challengeUrl = ""
@@ -320,6 +336,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Challenge succeeded — user is logged in.
 		m.connected = true
 		m.username = msg.User.Username
+		m.userPK = msg.User.PK
 		m.mode = ModeNormal
 		m.loginError = ""
 		m.loginStep = LoginStepUsername
@@ -349,6 +366,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 2FA succeeded — user is logged in.
 		m.connected = true
 		m.username = msg.User.Username
+		m.userPK = msg.User.PK
 		m.mode = ModeNormal
 		m.loginError = ""
 		m.loginStep = LoginStepUsername
@@ -560,7 +578,7 @@ func (m Model) updateInsertMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			newMsg := Message{
 				Text:      text,
 				Timestamp: time.Now().UnixMicro(),
-				UserId:    "me",
+				UserId:    m.userPK,
 			}
 			m.activeMessages = append(m.activeMessages, newMsg)
 			m.conversationCache[m.activeThread.ThreadID] = m.activeMessages

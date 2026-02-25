@@ -253,7 +253,8 @@ func (m Model) renderThreadList(width, height int) string {
 		b.WriteString(line)
 
 		// Preview of last message, dimmed, on the next line
-		preview := truncate(thread.LastMessage.Text, width-4)
+		previewText := strings.ReplaceAll(thread.LastMessage.Text, "\n", " ")
+		preview := truncate(previewText, width-4)
 		if preview != "" {
 			b.WriteString("\n")
 			b.WriteString("  " + placeholderStyle.Render(preview))
@@ -485,7 +486,7 @@ func (m Model) renderMessages(messages []Message) string {
 
 	for _, msg := range messages {
 		ts := formatTimestamp(msg.Timestamp)
-		isMe := msg.UserId == "me"
+		isMe := msg.UserId == m.userPK
 
 		if isMe {
 			// Right-aligned: my messages

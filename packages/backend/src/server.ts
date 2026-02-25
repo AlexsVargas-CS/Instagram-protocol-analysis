@@ -182,9 +182,9 @@ function startRealtimeListener(): void {
 }
 
 async function init(): Promise<void> {
-	const restored = await client.loadSession();
-	sendEvent('sessionRestored', {success: restored});
-	if (restored) {
+	const user = await client.loadSession();
+	sendEvent('sessionRestored', {success: !!user, user: user || undefined});
+	if (user) {
 		startRealtimeListener();
 	}
 }

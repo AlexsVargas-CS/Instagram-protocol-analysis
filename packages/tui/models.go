@@ -89,6 +89,7 @@ type Model struct {
 	height    int
 	connected bool
 	username  string
+	userPK    string
 	statusMsg string
 	err       error
 

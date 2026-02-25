@@ -11,6 +11,7 @@ export class InstagramClient {
   private twoFactorUsername?: string;
   private twoFactorIsTOTP?: boolean;
   private saveTimer?: ReturnType<typeof setTimeout>;
+  private currentUserPK?: string;
 
 	constructor(sessionPath = './session.json') {
 		this.ig = new IgApiClient();
@@ -33,6 +34,7 @@ export class InstagramClient {
 			}
 
 			const loggedInUser = await this.ig.account.login(username, password);
+			this.currentUserPK = String(loggedInUser.pk);
 
 			await this.saveSession();
 			await this.runPostLoginFlow();
@@ -136,18 +138,32 @@ export class InstagramClient {
 	
 	
 	
-	async loadSession(): Promise<boolean> {//session is either restored or not.
+	async loadSession(): Promise<User | null> {//session is either restored or not.
 		//get the session/ read it, feed saved state back into the library's internal state machine, call user to make sure session hasnt expired.
 		try {
 			const data = await fs.readFile(this.sessionPath, 'utf-8'); //get session and store
 			const stateObject = JSON.parse(data);
-			await this.ig.state.deserialize(stateObject); //restores session state from a saved JSON string 
-			
+			await this.ig.state.deserialize(stateObject); //restores session state from a saved JSON string
+
 			//quickly validiating user session, making sure its not expired
-			await this.ig.account.currentUser();
-			return true;
+			const user = await this.ig.account.currentUser();
+			this.currentUserPK = String(user.pk);
+
+			// Re-parse authorization AFTER currentUser() — the API response
+			// may have set/refreshed the ig-set-authorization header via
+			// request.js updateState(). parsedAuthorization has @Enumerable(false)
+			// so it's never serialized — must be rebuilt from the Bearer token.
+			(this.ig.state as any).updateAuthorization();
+
+			// Debug: log authorization state for diagnosing realtime issues.
+			const auth = (this.ig.state as any).authorization;
+			const parsed = (this.ig.state as any).parsedAuthorization;
+			process.stderr.write(`[session] authorization type=${typeof auth}, starts=${auth?.substring?.(0, 20)}\n`);
+			process.stderr.write(`[session] parsedAuthorization has sessionid=${!!parsed?.sessionid}\n`);
+
+			return this.mapUser(user);
 		}catch {
-			return false;
+			return null;
 		}
 	}
 	
@@ -212,6 +228,8 @@ export class InstagramClient {
 				.filter(item => item != null && item.text != null)
 				.map((item) => this.mapMessage(item));
 
+			messages.reverse(); // API returns newest-first; reverse to chronological (oldest-first)
+
 			return {
 				messages,
 				oldestCursor: feed.cursor || null,
@@ -240,7 +258,7 @@ export class InstagramClient {
 				itemId: payload.item_id ? String(payload.item_id) : undefined,
 				text,
 				timestamp: payload.timestamp ? Number(payload.timestamp) : Date.now() * 1000,
-				userId: 'me',
+				userId: this.currentUserPK || 'me',
 			};
 		} catch (error) {
 			if (error instanceof IgLoginRequiredError) {
@@ -273,11 +291,13 @@ export class InstagramClient {
 			await this.runPostLoginFlow();
 
 			if (response?.logged_in_user) {
+				this.currentUserPK = String(response.logged_in_user.pk);
 				return this.mapUser(response.logged_in_user);
 			}
 
 			// Fallback: fetch current user from the now-authenticated session
 			const currentUser = await this.ig.account.currentUser();
+			this.currentUserPK = String(currentUser.pk);
 			return this.mapUser(currentUser);
 		} catch (error) {
 			if (error instanceof IgLoginRequiredError) {
@@ -301,6 +321,7 @@ export class InstagramClient {
 				verificationMethod: this.twoFactorIsTOTP ? '0' : '1',
 				trustThisDevice: '1',
 			});
+			this.currentUserPK = String(loggedInUser.pk);
 			await this.saveSession();
 			this.twoFactorIdentifier = undefined;
 			this.twoFactorUsername = undefined;
@@ -322,48 +343,82 @@ export class InstagramClient {
 	async startRealtime(
 		onMessage: (threadId: string, message: Message) => void,
 		onError?: (error: string) => void,
+		retries = 3,
 	): Promise<void> {
-		try {
-			// Fetch inbox to get seq_id for proper iris subscription.
-			const inbox = await this.ig.feed.directInbox().request();
-
-			this.igRt = withRealtime(this.ig);
-			this.igRt.realtime.on('message', (wrapper) => {
-				const msg = wrapper.message;
-				if (msg.op === 'add' && msg.text && msg.thread_id) {
-					const mapped: Message = {
-						itemId: msg.item_id ? String(msg.item_id) : undefined,
-						text: msg.text,
-						timestamp: msg.timestamp ? Number(msg.timestamp) : 0,
-						userId: msg.user_id ? String(msg.user_id) : '',
-					};
-					onMessage(msg.thread_id, mapped);
+		for (let attempt = 0; attempt < retries; attempt++) {
+			try {
+				// Verify session is ready for MQTT.
+				if (!this.ig.state.cookieUserId) {
+					if (attempt < retries - 1) {
+						process.stderr.write(
+							`[realtime] cookieUserId not ready, retrying in ${2 * (attempt + 1)}s (attempt ${attempt + 1}/${retries})\n`,
+						);
+						await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+						continue;
+					}
+					onError?.('Session not ready for realtime (no cookieUserId)');
+					return;
 				}
-			});
-			this.igRt.realtime.on('error', (err) => {
-				process.stderr.write(`Realtime error: ${err.message}\n`);
-				onError?.(err.message);
-			});
-			this.igRt.realtime.on('close', () => {
-				process.stderr.write(`Realtime connection closed\n`);
-				onError?.('Realtime connection closed');
-			});
-			await this.igRt.realtime.connect({
-				graphQlSubs: [
-					GraphQLSubscriptions.getDirectTypingSubscription(this.ig.state.cookieUserId),
-					GraphQLSubscriptions.getDirectStatusSubscription(),
-				],
-				skywalkerSubs: [
-					SkywalkerSubscriptions.directSub(this.ig.state.cookieUserId),
-				],
-				irisData: {
-					seq_id: inbox.seq_id,
-					snapshot_at_ms: inbox.snapshot_at_ms,
-				},
-			});
-		} catch (error) {
-			// Realtime is non-critical; log and continue.
-			process.stderr.write(`Realtime connect failed: ${error instanceof Error ? error.message : error}\n`);
+
+				// Ensure parsedAuthorization is populated before MQTT connects.
+				(this.ig.state as any).updateAuthorization();
+
+				// Debug: check if sessionid is available before connecting.
+				const parsed = (this.ig.state as any).parsedAuthorization;
+				process.stderr.write(`[realtime] attempt=${attempt + 1} parsedAuth.sessionid=${!!parsed?.sessionid}, cookieUserId=${this.ig.state.cookieUserId}\n`);
+
+				// Fetch inbox to get seq_id for proper iris subscription.
+				const inbox = await this.ig.feed.directInbox().request();
+
+				this.igRt = withRealtime(this.ig);
+				this.igRt.realtime.on('message', (wrapper) => {
+					const msg = wrapper.message;
+					if (msg.op === 'add' && msg.text && msg.thread_id) {
+						const mapped: Message = {
+							itemId: msg.item_id ? String(msg.item_id) : undefined,
+							text: msg.text,
+							timestamp: msg.timestamp ? Number(msg.timestamp) : 0,
+							userId: msg.user_id ? String(msg.user_id) : '',
+						};
+						onMessage(msg.thread_id, mapped);
+					}
+				});
+				this.igRt.realtime.on('error', (err) => {
+					process.stderr.write(`Realtime error: ${err.message}\n`);
+					onError?.(err.message);
+				});
+				this.igRt.realtime.on('close', () => {
+					process.stderr.write(`Realtime connection closed\n`);
+					onError?.('Realtime connection closed');
+				});
+				await this.igRt.realtime.connect({
+					graphQlSubs: [
+						GraphQLSubscriptions.getDirectTypingSubscription(this.ig.state.cookieUserId),
+						GraphQLSubscriptions.getDirectStatusSubscription(),
+					],
+					skywalkerSubs: [
+						SkywalkerSubscriptions.directSub(this.ig.state.cookieUserId),
+					],
+					irisData: {
+						seq_id: inbox.seq_id,
+						snapshot_at_ms: inbox.snapshot_at_ms,
+					},
+				});
+				return; // Success — exit retry loop.
+			} catch (error) {
+				if (attempt < retries - 1) {
+					process.stderr.write(
+						`[realtime] Connect attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : error}, retrying...\n`,
+					);
+					await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+					continue;
+				}
+				// Final failure — non-critical; log and notify.
+				process.stderr.write(
+					`Realtime connect failed after ${retries} attempts: ${error instanceof Error ? error.message : error}\n`,
+				);
+				onError?.(error instanceof Error ? error.message : String(error));
+			}
 		}
 	}
 

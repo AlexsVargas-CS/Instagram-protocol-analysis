@@ -13,6 +13,7 @@ type Backend struct {
 	cmd    *exec.Cmd
 	Stdin  io.WriteCloser
 	Stdout io.ReadCloser
+	logFile *os.File // stderr log file
 }
 
 // StartBackend spawns `node dist/server.js` in the backend directory.
@@ -29,7 +30,15 @@ func StartBackend() (*Backend, error) {
 
 	cmd := exec.Command(nodePath, scriptPath)
 	cmd.Dir = backendDir
-	cmd.Stderr = os.Stderr // backend debug output visible in terminal
+
+	// Redirect backend stderr to a log file instead of the terminal.
+	// Raw stderr output from the child process corrupts bubbletea's TUI rendering.
+	logFile, logErr := os.OpenFile("backend.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if logErr != nil {
+		cmd.Stderr = io.Discard // fallback: discard if can't open log
+	} else {
+		cmd.Stderr = logFile
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -46,9 +55,10 @@ func StartBackend() (*Backend, error) {
 	}
 
 	return &Backend{
-		cmd:    cmd,
-		Stdin:  stdin,
-		Stdout: stdout,
+		cmd:     cmd,
+		Stdin:   stdin,
+		Stdout:  stdout,
+		logFile: logFile,
 	}, nil
 }
 
@@ -60,5 +70,8 @@ func (b *Backend) Stop() {
 	if b.cmd != nil && b.cmd.Process != nil {
 		// Wait briefly for graceful exit, then kill.
 		_ = b.cmd.Wait()
+	}
+	if b.logFile != nil {
+		b.logFile.Close()
 	}
 }

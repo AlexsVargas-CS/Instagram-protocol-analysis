@@ -1,0 +1,9 @@
+[realtime] attempt=1 parsedAuth.sessionid=true, cookieUserId=79992979604
+Realtime error: Cookie "sessionid" not found
+[realtime] Connect attempt 1 failed: Cookie "sessionid" not found, retrying...
+[realtime] attempt=2 parsedAuth.sessionid=true, cookieUserId=79992979604
+Realtime error: Cookie "sessionid" not found
+[realtime] Connect attempt 2 failed: Cookie "sessionid" not found, retrying...
+[realtime] attempt=3 parsedAuth.sessionid=true, cookieUserId=79992979604
+Realtime error: Cookie "sessionid" not found
+Realtime connect failed after 3 attempts: Cookie "sessionid" not found
