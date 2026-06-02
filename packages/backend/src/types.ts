@@ -1,22 +1,22 @@
 export class InstagramClientError extends Error {
-	constructor(message: string){
-		super(message);
-		this.name = 'InstagramClientError';
-
-		}
+  constructor(message: string) {
+    super(message);
+    this.name = 'InstagramClientError';
+  }
 }
 
 export class AuthenticationError extends InstagramClientError {
-	public reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required';
-	
-	constructor(message: string, reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required') {
+  public reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required';
+
+  constructor(
+    message: string,
+    reason: 'bad_credentials' | 'checkpoint_required' | 'two_factor_required',
+  ) {
     super(message);
     this.name = 'AuthenticationError';
     this.reason = reason;
   }
-	
 }
-
 
 export class SessionError extends InstagramClientError {
   constructor(message: string) {
@@ -35,27 +35,25 @@ export class InstagramAPIError extends InstagramClientError {
   }
 }
 
-
-export interface User{
-	username: string;
-	pk:string;
+export interface User {
+  username: string;
+  pk: string;
 }
 
-export interface Message{
-	itemId?: string;
-	text: string;
-	timestamp: number;
-	userId: string;
-
+export interface Message {
+  itemId?: string;
+  text: string;
+  timestamp: number;
+  userId: string;
 }
 
 export interface Thread {
-	thread_id: string;
-	users: User[];
-	lastMessage :Message;
-	unreadCount: number;
-	lastActivityAt: number;
-	is_group: boolean;
+  thread_id: string;
+  users: User[];
+  lastMessage: Message;
+  unreadCount: number;
+  lastActivityAt: number;
+  is_group: boolean;
 }
 
 export interface GetMessagesResult {
