@@ -4,17 +4,24 @@ import { User, Thread, Message, GetMessagesResult, GetThreadsResult, Authenticat
 import * as fs from 'fs/promises';
 
 export class InstagramClient {
-  private ig: IgApiClient;
-  private igRt?: IgApiClientRealtime;
+  private ig: IgApiClientRealtime;
   private sessionPath: string;
   private twoFactorIdentifier?: string;
   private twoFactorUsername?: string;
   private twoFactorIsTOTP?: boolean;
   private saveTimer?: ReturnType<typeof setTimeout>;
   private currentUserPK?: string;
+  private realtimeHandlersBound = false;
+  private onRealtimeMessage?: (threadId: string, message: Message) => void;
+  private onRealtimeError?: (error: string) => void;
 
 	constructor(sessionPath = './session.json') {
-		this.ig = new IgApiClient();
+		// Wrap with withRealtime() at construction time so the MQTT library
+		// shares the same IgApiClientExt instance (and its cookie jar / state)
+		// used for login and all API calls. Calling withRealtime() later on a
+		// plain IgApiClient causes assertClient() to create a NEW empty client,
+		// losing all session state.
+		this.ig = withRealtime(new IgApiClient());
 		this.sessionPath = sessionPath;
 		this.setupAutoSave();
 	}
@@ -345,6 +352,10 @@ export class InstagramClient {
 		onError?: (error: string) => void,
 		retries = 3,
 	): Promise<void> {
+		// Store the latest callbacks so the (bind-once) handlers always forward to
+		// the current server closures, even if startRealtime is invoked again.
+		this.onRealtimeMessage = onMessage;
+		this.onRealtimeError = onError;
 		for (let attempt = 0; attempt < retries; attempt++) {
 			try {
 				// Verify session is ready for MQTT.
@@ -360,38 +371,36 @@ export class InstagramClient {
 					return;
 				}
 
-				// Ensure parsedAuthorization is populated before MQTT connects.
+				// Ensure parsedAuthorization is populated BEFORE any API call.
 				(this.ig.state as any).updateAuthorization();
 
-				// Debug: check if sessionid is available before connecting.
-				const parsed = (this.ig.state as any).parsedAuthorization;
-				process.stderr.write(`[realtime] attempt=${attempt + 1} parsedAuth.sessionid=${!!parsed?.sessionid}, cookieUserId=${this.ig.state.cookieUserId}\n`);
+				// Capture sessionid NOW while parsedAuthorization is valid.
+				// The upcoming inbox request may refresh the authorization header
+				// to a new Bearer token that lacks sessionid, making parsedAuth stale.
+				const parsedAuth = (this.ig.state as any).parsedAuthorization;
+				const capturedSessionId: string | undefined = parsedAuth?.sessionid;
+				process.stderr.write(`[realtime] attempt=${attempt + 1} capturedSessionId=${!!capturedSessionId}, cookieUserId=${this.ig.state.cookieUserId}\n`);
 
 				// Fetch inbox to get seq_id for proper iris subscription.
 				const inbox = await this.ig.feed.directInbox().request();
 
-				this.igRt = withRealtime(this.ig);
-				this.igRt.realtime.on('message', (wrapper) => {
-					const msg = wrapper.message;
-					if (msg.op === 'add' && msg.text && msg.thread_id) {
-						const mapped: Message = {
-							itemId: msg.item_id ? String(msg.item_id) : undefined,
-							text: msg.text,
-							timestamp: msg.timestamp ? Number(msg.timestamp) : 0,
-							userId: msg.user_id ? String(msg.user_id) : '',
-						};
-						onMessage(msg.thread_id, mapped);
-					}
-				});
-				this.igRt.realtime.on('error', (err) => {
-					process.stderr.write(`Realtime error: ${err.message}\n`);
-					onError?.(err.message);
-				});
-				this.igRt.realtime.on('close', () => {
-					process.stderr.write(`Realtime connection closed\n`);
-					onError?.('Realtime connection closed');
-				});
-				await this.igRt.realtime.connect({
+				// Force-inject sessionid into cookie jar using the value captured
+				// BEFORE the inbox request. The inbox response may have refreshed
+				// the Bearer token (via ig-set-authorization header) to one that
+				// omits sessionid. The MQTT library's constructConnection() reads
+				// parsedAuthorization?.sessionid first, falling back to
+				// extractCookieValue('sessionid'). Both fail if we don't inject here.
+				this.ensureSessionCookies(capturedSessionId);
+
+				// Re-sync parsedAuthorization with the (possibly new) authorization.
+				(this.ig.state as any).updateAuthorization();
+
+				// this.ig is already an IgApiClientRealtime (wrapped in constructor),
+				// so this.ig.realtime shares the same state/cookie jar.
+				// Bind handlers exactly once — registering inside the retry loop
+				// would stack duplicate handlers on every attempt.
+				this.bindRealtimeHandlers();
+				await this.ig.realtime.connect({
 					graphQlSubs: [
 						GraphQLSubscriptions.getDirectTypingSubscription(this.ig.state.cookieUserId),
 						GraphQLSubscriptions.getDirectStatusSubscription(),
@@ -422,10 +431,104 @@ export class InstagramClient {
 		}
 	}
 
+	/**
+	 * Register the realtime event handlers exactly once for this client's lifetime.
+	 *
+	 * EventEmitter.on() appends rather than replaces, so binding inside the retry
+	 * loop (or on each startRealtime call) would deliver every message N times.
+	 * The handlers forward to this.onRealtimeMessage / this.onRealtimeError, which
+	 * are refreshed on every startRealtime call, so the latest callbacks are used.
+	 *
+	 * We do NOT removeAllListeners('error'|'close') — the MQTT client registers its
+	 * own internal handlers on those events, and removing them could escalate a
+	 * recoverable error into an unhandled crash.
+	 */
+	private bindRealtimeHandlers(): void {
+		if (this.realtimeHandlersBound) return;
+		this.realtimeHandlersBound = true;
+
+		this.ig.realtime.on('message', (wrapper) => {
+			const msg = wrapper.message;
+			if (msg.op === 'add' && msg.text && msg.thread_id) {
+				const mapped: Message = {
+					itemId: msg.item_id ? String(msg.item_id) : undefined,
+					text: msg.text,
+					timestamp: msg.timestamp ? Number(msg.timestamp) : 0,
+					userId: msg.user_id ? String(msg.user_id) : '',
+				};
+				this.onRealtimeMessage?.(msg.thread_id, mapped);
+			}
+		});
+		this.ig.realtime.on('error', (err) => {
+			process.stderr.write(`Realtime error: ${err.message}\n`);
+			this.onRealtimeError?.(err.message);
+		});
+		this.ig.realtime.on('close', () => {
+			process.stderr.write(`Realtime connection closed\n`);
+			this.onRealtimeError?.('Realtime connection closed');
+		});
+	}
+
+	/**
+	 * Populate the cookie jar with sessionid so the MQTT library can authenticate.
+	 *
+	 * Instagram's modern auth uses Bearer tokens (IGT:2:...) exclusively, leaving
+	 * the cookie jar empty. The MQTT library reads sessionid via:
+	 *   parsedAuthorization?.sessionid ?? extractCookieValue('sessionid')
+	 *
+	 * Problem: API responses may refresh the Bearer token (ig-set-authorization header)
+	 * to one that omits sessionid, making parsedAuthorization stale. We solve this by
+	 * accepting a pre-captured sessionid (from before the token refresh) and force-
+	 * injecting it into the cookie jar as a reliable fallback.
+	 */
+	private ensureSessionCookies(capturedSessionId?: string): void {
+		const rawAuth: string = (this.ig.state as any).authorization ?? '';
+		const host = 'https://i.instagram.com/';
+
+		// Try to get sessionid from: 1) pre-captured value, 2) current Bearer token.
+		let sessionid = capturedSessionId;
+		let dsUserId: string | undefined;
+
+		if (rawAuth.startsWith('Bearer IGT:2:')) {
+			try {
+				const decoded: { sessionid?: string; ds_user_id?: string } = JSON.parse(
+					Buffer.from(rawAuth.substring('Bearer IGT:2:'.length), 'base64').toString(),
+				);
+				if (!sessionid && decoded.sessionid) sessionid = decoded.sessionid;
+				dsUserId = decoded.ds_user_id;
+			} catch {
+				// Token decode failed — continue with capturedSessionId if available.
+			}
+		}
+
+		// Always force-inject sessionid cookie (overwrite stale values).
+		if (sessionid) {
+			(this.ig.state as any).cookieJar.setCookie(
+				`sessionid=${sessionid}; Domain=.instagram.com; Path=/; Secure; HttpOnly`,
+				host,
+			);
+			process.stderr.write(`[realtime] Injected sessionid cookie (len=${sessionid.length})\n`);
+		} else {
+			process.stderr.write('[realtime] WARNING: no sessionid available for cookie injection\n');
+		}
+
+		if (dsUserId) {
+			try {
+				this.ig.state.extractCookieValue('ds_user_id');
+			} catch {
+				(this.ig.state as any).cookieJar.setCookie(
+					`ds_user_id=${dsUserId}; Domain=.instagram.com; Path=/`,
+					host,
+				);
+			}
+		}
+	}
+
 	async stopRealtime(): Promise<void> {
-		if (this.igRt) {
-			await this.igRt.realtime.disconnect();
-			this.igRt = undefined;
+		try {
+			await this.ig.realtime.disconnect();
+		} catch {
+			// Ignore errors if not connected.
 		}
 	}
 
@@ -448,6 +551,36 @@ export class InstagramClient {
 		};
 	}
 
+	/**
+	 * Derive an unread count for an inbox thread.
+	 *
+	 * Instagram's inbox does NOT return a per-thread unread count. We reconstruct
+	 * one by comparing each recent item's timestamp against the viewer's own
+	 * last_seen_at timestamp: an item is unread if it's newer than the last time
+	 * I saw the thread AND it wasn't sent by me. The inbox only includes the most
+	 * recent items, so this can under-count very busy unread threads — that's the
+	 * best faithful approximation available from this payload.
+	 */
+	private computeUnreadCount(r: Record<string, unknown>): number {
+		const viewerId = String(r.viewer_id ?? this.currentUserPK ?? '');
+		if (!viewerId) return 0;
+
+		const seenMap = r.last_seen_at as Record<string, { timestamp?: string }> | undefined;
+		const mySeenTs = seenMap ? Number(seenMap[viewerId]?.timestamp ?? 0) : 0;
+
+		let items = Array.isArray(r.items) ? (r.items as Array<Record<string, unknown>>) : [];
+		if (items.length === 0 && r.last_permanent_item) {
+			items = [r.last_permanent_item as Record<string, unknown>];
+		}
+
+		let count = 0;
+		for (const it of items) {
+			const fromMe = String(it.user_id ?? '') === viewerId;
+			if (!fromMe && Number(it.timestamp ?? 0) > mySeenTs) count++;
+		}
+		return count;
+	}
+
 	private mapThread(raw:unknown): Thread{
 		const r = raw as Record<string, unknown>;
 		const raw_user = r.users;
@@ -461,7 +594,7 @@ export class InstagramClient {
 			thread_id : String(r.thread_id ?? ''),
 			users: users,
 			lastMessage : last_perm_item,
-			unreadCount: Number((r as any).read_state ?? 0),
+			unreadCount: this.computeUnreadCount(r),
 			lastActivityAt: Number(r.last_activity_at ?? 0),
 			is_group: Boolean(r.is_group ?? false),
 		};

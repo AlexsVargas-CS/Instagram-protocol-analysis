@@ -15,5 +15,8 @@ packages/backend/dist/
 # Auth session (contains credentials)
 packages/backend/session.json
 
+# Logs (may contain session/token material)
+*.log
+
 # Compiled binaries
 packages/tui/instagram-cli-tui.exe
