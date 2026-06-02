@@ -38,6 +38,27 @@ func (m Mode) String() string {
 
 }
 
+// stateName returns the spatial-model state label shown in the status badge.
+// The navigation model has three primary states laid out left → right —
+// Browse → Read → Compose — derived from the mode + focus combination.
+// Search is a sub-flag of Browse but gets its own label for clarity.
+func (m Model) stateName() string {
+	switch m.mode {
+	case ModeInsert:
+		return "COMPOSE"
+	case ModeSearch:
+		return "SEARCH"
+	case ModeLogin:
+		return "LOGIN"
+	case ModeNormal:
+		if m.focus == FocusConversation {
+			return "READ"
+		}
+		return "BROWSE"
+	}
+	return "UNKNOWN"
+}
+
 type LoginStep int
 
 const (

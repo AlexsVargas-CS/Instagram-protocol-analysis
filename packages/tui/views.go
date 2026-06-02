@@ -20,6 +20,12 @@ var selectedThreadStyle = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(lipgloss.Color("15")).
 	Background(lipgloss.Color("60"))
+
+// Dimmed selection — shown when the thread list is NOT the active pane (Read
+// state), so the highlight reads as "remembered selection" rather than focus.
+var selectedThreadDimStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("250")).
+	Background(lipgloss.Color("238"))
 var unselectedThreadStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("252"))
 
@@ -178,14 +184,13 @@ func (m Model) renderHeader() string{
 func (m Model) renderThreadList(width, height int) string {
 	var b strings.Builder
 
-	// Search bar: show input when in search mode, otherwise show hint
+	// Search bar: only shown while actively searching. The "/ search" hint
+	// now lives in the contextual status bar, not as an always-on header.
 	if m.mode == ModeSearch {
 		b.WriteString(searchBarStyle.Render("/ "))
 		b.WriteString(m.searchInput.View())
-	} else {
-		b.WriteString(placeholderStyle.Render("/ Press s to search"))
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\n\n")
 
 	// Determine which threads to display
 	threads := m.getVisibleThreads()
@@ -242,10 +247,16 @@ func (m Model) renderThreadList(width, height int) string {
 			badge = unreadBadgeStyle.Render(fmt.Sprintf(" [%d]", thread.UnreadCount))
 		}
 
-		// Compose the line
+		// Compose the line. The selected row dims when the conversation pane
+		// holds focus (Read), keeping the spatial active-pane cue obvious.
+		selStyle := selectedThreadStyle
+		if m.focus == FocusConversation {
+			selStyle = selectedThreadDimStyle
+		}
+
 		var line string
 		if i == m.cursor {
-			line = selectedThreadStyle.Render(indicator+displayName) + badge
+			line = selStyle.Render(indicator+displayName) + badge
 		} else {
 			line = unselectedThreadStyle.Render(indicator+displayName) + badge
 		}
@@ -318,7 +329,7 @@ func (m Model) renderConversation(width, height int) string {
 	if m.mode == ModeInsert {
 		b.WriteString("> " + m.messageInput.View())
 	} else {
-		b.WriteString(placeholderStyle.Render("> Press i to type a message"))
+		b.WriteString(placeholderStyle.Render("Press Enter to reply"))
 	}
 
 	return b.String()
@@ -517,18 +528,20 @@ func (m Model) renderMessages(messages []Message) string {
 }
 
 func (m Model) renderStatusBar() string {
+	// Contextual keybinding hints — only the keys valid for the current state.
+	// Hidden vim aliases (h/j/k/l) are intentionally undocumented here.
 	var keys string
 	switch m.mode {
 	case ModeNormal:
 		if m.focus == FocusConversation {
-			keys = "j/k: scroll  u/d: page  G: bottom  gg: top/older  h: threads  i: insert"
+			keys = "↑↓ scroll   ⏎ reply   ← back"
 		} else {
-			keys = "j/k: nav  l: chat  Enter: load  s: search  i: insert  q: quit"
+			keys = "↑↓ navigate   → open   / search   q quit"
 		}
 	case ModeSearch:
 		keys = "Type to filter  Enter: select  Esc: cancel"
 	case ModeInsert:
-		keys = "Type message  Enter: send  Esc: cancel"
+		keys = "⏎ send   esc cancel"
 	case ModeLogin:
 		if m.loginStep == LoginStepChallengeUrl {
 			keys = "Enter: retry login  Esc: quit"
@@ -545,8 +558,8 @@ func (m Model) renderStatusBar() string {
 		left = m.statusMsg + "  |  " + keys
 	}
 
-	// Mode badge on the right
-	modeBadge := modeStyle.Render(m.mode.String())
+	// State badge on the right — BROWSE / READ / COMPOSE (spatial-model name).
+	modeBadge := modeStyle.Render(m.stateName())
 
 	spacerWidth := m.width - lipgloss.Width(left) - lipgloss.Width(modeBadge) - 2
 	if spacerWidth < 1 {

@@ -439,31 +439,25 @@ func (m Model) updateNormalThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "enter":
+	// Enter / → / l — advance: open the selected thread and move to Read.
+	// (l is the hidden vim alias for →.)
+	case "enter", "right", "l":
+		if len(m.getVisibleThreads()) == 0 {
+			return m, nil
+		}
 		m.loaded = true
+		m.focus = FocusConversation
 		return m.loadConversationCmd()
 
-	case "l", "tab":
-		if m.activeThread != nil {
-			m.focus = FocusConversation
-		}
-		return m, nil
-
-	case "s":
+	case "/":
 		m.mode = ModeSearch
 		m.preSearchCursor = m.cursor
 		m.searchInput.Focus()
 		m.cursor = 0
 		return m, nil
-
-	case "i":
-		if m.activeThread != nil {
-			m.mode = ModeInsert
-			m.messageInput.Focus()
-		}
-		return m, nil
 	}
 
+	// ← / h are no-ops in Browse — it is the leftmost layer.
 	return m, nil
 }
 
@@ -473,14 +467,21 @@ func (m Model) updateNormalConversation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
-	case "h", "tab":
+	// ← / h / Esc — back one layer to Browse. (h is the hidden vim alias for ←.)
+	case "left", "h", "esc":
 		m.focus = FocusThreadList
 		m.pendingG = false
 		return m, nil
 
-	case "i":
+	// Enter — advance to Compose. (i kept as a silent vim-insert alias.)
+	case "enter", "i":
 		m.mode = ModeInsert
 		m.messageInput.Focus()
+		m.pendingG = false
+		return m, nil
+
+	// → / l — no layer to advance to from Read; swallow so it doesn't scroll.
+	case "right", "l":
 		m.pendingG = false
 		return m, nil
 
@@ -538,6 +539,7 @@ func (m Model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			realIndex := visible[m.cursor]
 
 			m.mode = ModeNormal
+			m.focus = FocusConversation
 			m.searchInput.Blur()
 			m.searchInput.SetValue("")
 			m.filteredIndices = nil
@@ -565,8 +567,10 @@ func (m Model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateInsertMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 
+	// Esc — discard the in-progress input and return to Read.
 	case "esc":
 		m.mode = ModeNormal
+		m.focus = FocusConversation
 		m.messageInput.Blur()
 		m.messageInput.SetValue("")
 		return m, nil
