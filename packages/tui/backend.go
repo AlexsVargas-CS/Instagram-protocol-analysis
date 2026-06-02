@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // Backend manages the Node.js child process that handles Instagram API calls.
@@ -68,8 +69,20 @@ func (b *Backend) Stop() {
 		b.Stdin.Close()
 	}
 	if b.cmd != nil && b.cmd.Process != nil {
-		// Wait briefly for graceful exit, then kill.
-		_ = b.cmd.Wait()
+		// Closing stdin signals the backend to exit (it handles stdin EOF).
+		// Give it a moment, then hard-kill so a hung child can never block
+		// shutdown or linger as an orphan.
+		done := make(chan struct{})
+		go func() {
+			_ = b.cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			_ = b.cmd.Process.Kill()
+			<-done // reap the process after killing
+		}
 	}
 	if b.logFile != nil {
 		b.logFile.Close()

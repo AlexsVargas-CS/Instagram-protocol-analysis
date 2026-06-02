@@ -86,6 +86,25 @@ rl.on('line', async (line:string) => { //goal: dont allow any input other then a
 	
 });
 
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	try {
+		await client.stopRealtime();
+	} catch {
+		// Ignore teardown errors — we're exiting anyway.
+	}
+	process.exit(0);
+}
+
+// Stdin EOF means the TUI closed our input pipe. Without this handler the live
+// MQTT connection keeps the event loop alive and the process lingers as an
+// orphan. SIGTERM/SIGINT cover the parent killing us directly.
+rl.on('close', () => void shutdown());
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => void shutdown());
+
 async function handleRequest(req: Request): Promise<void> {
 	
 	try {

@@ -449,7 +449,13 @@ export class InstagramClient {
 
 		this.ig.realtime.on('message', (wrapper) => {
 			const msg = wrapper.message;
-			if (msg.op === 'add' && msg.text && msg.thread_id) {
+			// Skip echoes of our own sends — iris streams them back to us, but the
+			// TUI already shows them optimistically, so forwarding would duplicate.
+			// (Trade-off: sends from the user's OTHER devices won't appear live;
+			// they surface on the next getMessages reload of the thread.)
+			const fromSelf =
+				this.currentUserPK != null && String(msg.user_id ?? '') === this.currentUserPK;
+			if (msg.op === 'add' && msg.text && msg.thread_id && !fromSelf) {
 				const mapped: Message = {
 					itemId: msg.item_id ? String(msg.item_id) : undefined,
 					text: msg.text,

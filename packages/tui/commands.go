@@ -187,10 +187,10 @@ func sendMessageCmd(rpc *RPCClient, threadID, text string) tea.Cmd {
 // loginCmd calls "login" on the backend with username and password.
 func loginCmd(rpc *RPCClient, username, password string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := rpc.Send("login", map[string]interface{}{
+		result, err := rpc.SendWithTimeout("login", map[string]interface{}{
 			"username": username,
 			"password": password,
-		})
+		}, authRPCTimeout)
 		if err != nil {
 			return LoginResultMsg{Err: err}
 		}
@@ -216,9 +216,9 @@ func markReadCmd(rpc *RPCClient, threadID, itemID string) tea.Cmd {
 // submitChallengeCmd calls "submitChallenge" on the backend with the verification code.
 func submitChallengeCmd(rpc *RPCClient, code string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := rpc.Send("submitChallenge", map[string]interface{}{
+		result, err := rpc.SendWithTimeout("submitChallenge", map[string]interface{}{
 			"code": code,
-		})
+		}, authRPCTimeout)
 		if err != nil {
 			return ChallengeResultMsg{Err: err}
 		}
@@ -233,9 +233,9 @@ func submitChallengeCmd(rpc *RPCClient, code string) tea.Cmd {
 // submitTwoFactorCmd calls "submitTwoFactor" on the backend with the 2FA code.
 func submitTwoFactorCmd(rpc *RPCClient, code string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := rpc.Send("submitTwoFactor", map[string]interface{}{
+		result, err := rpc.SendWithTimeout("submitTwoFactor", map[string]interface{}{
 			"code": code,
-		})
+		}, authRPCTimeout)
 		if err != nil {
 			return TwoFactorResultMsg{Err: err}
 		}

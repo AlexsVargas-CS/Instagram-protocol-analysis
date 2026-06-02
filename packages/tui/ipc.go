@@ -109,8 +109,22 @@ func (c *RPCClient) readLoop(stdout io.Reader) {
 	c.Events <- RPCEvent{Event: "__disconnected"}
 }
 
-// Send sends a JSON-RPC request and blocks until a response arrives or timeout.
+// RPC timeouts. Auth methods chain several Instagram requests (preLoginSync,
+// login, reels tray, timeline, session save) and need a larger budget than a
+// single-request call.
+const (
+	defaultRPCTimeout = 30 * time.Second
+	authRPCTimeout    = 120 * time.Second
+)
+
+// Send sends a JSON-RPC request with the default timeout.
 func (c *RPCClient) Send(method string, params map[string]interface{}) (json.RawMessage, error) {
+	return c.SendWithTimeout(method, params, defaultRPCTimeout)
+}
+
+// SendWithTimeout sends a JSON-RPC request and blocks until a response arrives
+// or the timeout elapses.
+func (c *RPCClient) SendWithTimeout(method string, params map[string]interface{}, timeout time.Duration) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
 
 	req := RPCRequest{
@@ -152,7 +166,7 @@ func (c *RPCClient) Send(method string, params map[string]interface{}) (json.Raw
 			return nil, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
 		}
 		return resp.Result, nil
-	case <-time.After(30 * time.Second):
+	case <-time.After(timeout):
 		c.pendingMu.Lock()
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
