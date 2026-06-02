@@ -3,6 +3,13 @@ import { withRealtime, IgApiClientRealtime, GraphQLSubscriptions, SkywalkerSubsc
 import { User, Thread, Message, GetMessagesResult, GetThreadsResult, AuthenticationError, SessionError, InstagramAPIError } from './types';
 import * as fs from 'fs/promises';
 
+// Opt-in debug logging. Off by default so session/token internals never hit the
+// log. Enable with IG_DEBUG=1 when diagnosing auth/realtime issues.
+const DEBUG = process.env.IG_DEBUG === '1' || process.env.IG_DEBUG === 'true';
+function debugLog(msg: string): void {
+	if (DEBUG) process.stderr.write(msg);
+}
+
 export class InstagramClient {
   private ig: IgApiClientRealtime;
   private sessionPath: string;
@@ -165,8 +172,8 @@ export class InstagramClient {
 			// Debug: log authorization state for diagnosing realtime issues.
 			const auth = (this.ig.state as any).authorization;
 			const parsed = (this.ig.state as any).parsedAuthorization;
-			process.stderr.write(`[session] authorization type=${typeof auth}, starts=${auth?.substring?.(0, 20)}\n`);
-			process.stderr.write(`[session] parsedAuthorization has sessionid=${!!parsed?.sessionid}\n`);
+			debugLog(`[session] authorization type=${typeof auth}, starts=${auth?.substring?.(0, 20)}\n`);
+			debugLog(`[session] parsedAuthorization has sessionid=${!!parsed?.sessionid}\n`);
 
 			return this.mapUser(user);
 		}catch {
@@ -217,13 +224,54 @@ export class InstagramClient {
 
 	private mapMessage(raw: unknown): Message{
 		const r = raw as Record<string, unknown>;
+		const rawText = r.text != null ? String(r.text) : '';
 
 		return {
 			itemId: r.item_id ? String(r.item_id) : undefined,
-			text: String(r.text ?? ''),
+			// Fall back to a typed placeholder for non-text items (photos, likes,
+			// shares, …) so they keep their place in the timeline instead of
+			// silently vanishing.
+			text: rawText !== '' ? rawText : this.describeNonTextItem(r),
 			timestamp: r.timestamp ? Number(r.timestamp) : 0,
 			userId: String(r.user_id ?? r.userId ?? ''),
 		};
+	}
+
+	/**
+	 * Produce a short placeholder for a direct item that carries no text, keyed
+	 * off item_type. Unknown types degrade to "[<type>]" so nothing is lost.
+	 */
+	private describeNonTextItem(r: Record<string, unknown>): string {
+		const type = String(r.item_type ?? '');
+		switch (type) {
+			case 'text': return '';
+			case 'media': return '[photo]';
+			case 'raven_media': return '[disappearing photo]';
+			case 'voice_media': return '[voice message]';
+			case 'animated_media': return '[GIF]';
+			case 'like': return '[like]';
+			case 'media_share': return '[shared post]';
+			case 'story_share': return '[shared story]';
+			case 'clip': return '[shared reel]';
+			case 'felix_share': return '[shared video]';
+			case 'profile': return '[shared profile]';
+			case 'location': return '[shared location]';
+			case 'reel_share': return '[story reply]';
+			case 'placeholder': return '[unavailable message]';
+			case 'video_call_event': return '[video call]';
+			case 'link': {
+				const link = r.link as Record<string, unknown> | undefined;
+				const linkText = link?.text != null ? String(link.text) : '';
+				return linkText !== '' ? linkText : '[link]';
+			}
+			case 'action_log': {
+				const log = r.action_log as Record<string, unknown> | undefined;
+				const desc = log?.description != null ? String(log.description) : '';
+				return desc !== '' ? desc : '[action]';
+			}
+			case '': return '[message]';
+			default: return `[${type}]`;
+		}
 	}
 	
 	async getMessages(thread_id: string, _cursor?: string): Promise<GetMessagesResult> {
@@ -232,7 +280,7 @@ export class InstagramClient {
 			const items = await feed.items();
 
 			const messages = items
-				.filter(item => item != null && item.text != null)
+				.filter(item => item != null)
 				.map((item) => this.mapMessage(item));
 
 			messages.reverse(); // API returns newest-first; reverse to chronological (oldest-first)
@@ -379,7 +427,7 @@ export class InstagramClient {
 				// to a new Bearer token that lacks sessionid, making parsedAuth stale.
 				const parsedAuth = (this.ig.state as any).parsedAuthorization;
 				const capturedSessionId: string | undefined = parsedAuth?.sessionid;
-				process.stderr.write(`[realtime] attempt=${attempt + 1} capturedSessionId=${!!capturedSessionId}, cookieUserId=${this.ig.state.cookieUserId}\n`);
+				debugLog(`[realtime] attempt=${attempt + 1} capturedSessionId=${!!capturedSessionId}, cookieUserId=${this.ig.state.cookieUserId}\n`);
 
 				// Fetch inbox to get seq_id for proper iris subscription.
 				const inbox = await this.ig.feed.directInbox().request();
@@ -513,7 +561,7 @@ export class InstagramClient {
 				`sessionid=${sessionid}; Domain=.instagram.com; Path=/; Secure; HttpOnly`,
 				host,
 			);
-			process.stderr.write(`[realtime] Injected sessionid cookie (len=${sessionid.length})\n`);
+			debugLog(`[realtime] Injected sessionid cookie (len=${sessionid.length})\n`);
 		} else {
 			process.stderr.write('[realtime] WARNING: no sessionid available for cookie injection\n');
 		}

@@ -425,7 +425,7 @@ func (m Model) updateNormalThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.adjustThreadListOffset()
 		if m.loaded {
-			return m.loadConversationCmd()
+			return m.showCachedConversation()
 		}
 		return m, nil
 
@@ -435,7 +435,7 @@ func (m Model) updateNormalThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.adjustThreadListOffset()
 		if m.loaded {
-			return m.loadConversationCmd()
+			return m.showCachedConversation()
 		}
 		return m, nil
 
@@ -637,6 +637,34 @@ func (m Model) loadConversationCmd() (tea.Model, tea.Cmd) {
 	if m.rpc != nil {
 		return m, fetchMessagesCmd(m.rpc, m.activeThread.ThreadID, "", false)
 	}
+	return m, nil
+}
+
+// showCachedConversation points activeThread at the highlighted thread and shows
+// its messages from cache if present. Unlike loadConversationCmd it NEVER issues
+// a backend fetch — navigating the list with j/k must not hit the Instagram API
+// on every keystroke (rate-limit / checkpoint risk). Explicit opens (Enter/l)
+// still use loadConversationCmd, which fetches on a cache miss.
+func (m Model) showCachedConversation() (tea.Model, tea.Cmd) {
+	if len(m.threads) == 0 {
+		return m, nil
+	}
+	if m.cursor >= len(m.threads) {
+		m.cursor = len(m.threads) - 1
+	}
+	m.activeThread = &m.threads[m.cursor]
+
+	if msgs, ok := m.conversationCache[m.activeThread.ThreadID]; ok {
+		m.activeMessages = msgs
+		content := m.buildMessageContent()
+		m.messageViewport.SetContent(content)
+		m.messageViewport.GotoBottom()
+		return m, nil
+	}
+
+	// Cache miss — show a hint instead of fetching. Open with Enter/l to load.
+	m.activeMessages = nil
+	m.messageViewport.SetContent(placeholderStyle.Render("Press Enter to load conversation"))
 	return m, nil
 }
 
