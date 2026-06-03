@@ -152,8 +152,8 @@ type Model struct {
 	loginError     string
 }
 
-const conversationHeaderHeight = 2 // @name + separator
-const conversationInputHeight = 2  // blank line + input prompt
+const conversationHeaderHeight = 3 // name + "Active now" + accent rule
+const conversationInputHeight = 3  // rounded input box (top/content/bottom)
 
 func (m Model) viewportHeight() int {
 	bodyHeight := m.height - 2 // header bar + status bar

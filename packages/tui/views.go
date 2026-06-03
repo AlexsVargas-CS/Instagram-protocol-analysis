@@ -8,104 +8,146 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-//header bar style
+// ============================================================================
+// Design tokens — the single source of truth for the palette. Keep hex
+// literals here; do not scatter them through the render functions.
+// ============================================================================
+var (
+	colPink    = lipgloss.Color("#FF3FA4") // title
+	colPurple  = lipgloss.Color("#7C5CFC") // accent: sent bubbles, borders, badges, handle
+	colSelBg   = lipgloss.Color("#221E33") // selected-thread tinted background
+	colDarkBub = lipgloss.Color("#2A2A33") // received-bubble fill
+	colGreen   = lipgloss.Color("#3FB950") // online dot, sender name, "API: Connected"
+	colBlue    = lipgloss.Color("#58A6FF") // "Sync: Real-time" info icon
+	colGray    = lipgloss.Color("#8B8B96") // timestamps, previews, secondary chrome
+	colWhite   = lipgloss.Color("#FFFFFF") // primary text
+)
+
+// ---- Top app bar ----
 var headerStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("15")). 
-	Background(lipgloss.Color("62")). 
+	Foreground(colWhite).
+	Background(colPurple).
 	Padding(0, 1)
 
-	//Thread lst
-var selectedThreadStyle = lipgloss.NewStyle().
+// ---- Sidebar chrome ----
+var sidebarTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colPink)
+var mutedStyle = lipgloss.NewStyle().Foreground(colGray)
+var onlineDotStyle = lipgloss.NewStyle().Foreground(colGreen)
+var sectionHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(colGray)
+
+// Count / status pill: accent background, white text, 1 cell horizontal padding.
+var badgeStyle = lipgloss.NewStyle().
+	Background(colPurple).
+	Foreground(colWhite).
+	Padding(0, 1)
+
+// ---- Thread rows ----
+var threadNameStyle = lipgloss.NewStyle().Bold(true).Foreground(colWhite)
+var previewStyle = lipgloss.NewStyle().Italic(true).Foreground(colGray)
+var timestampStyle = lipgloss.NewStyle().Foreground(colGray)
+
+// Selected row: left accent bar (left border) + subtly tinted background.
+var selectedRowStyle = lipgloss.NewStyle().
+	Border(lipgloss.NormalBorder(), false, false, false, true).
+	BorderForeground(colPurple).
+	Background(colSelBg)
+
+// Unselected row: a 1-col indent so its text lines up with the bordered row.
+var unselectedRowStyle = lipgloss.NewStyle().PaddingLeft(1)
+
+var unreadBadgeStyle = lipgloss.NewStyle().Foreground(colPink).Bold(true)
+
+// ---- STATUS block icons ----
+var statusOkStyle = lipgloss.NewStyle().Foreground(colGreen)
+var statusInfoStyle = lipgloss.NewStyle().Foreground(colBlue)
+var statusClockStyle = lipgloss.NewStyle().Foreground(colGray)
+
+// ---- Conversation pane ----
+var convNameStyle = lipgloss.NewStyle().Bold(true).Foreground(colWhite)
+var convHandleStyle = lipgloss.NewStyle().Foreground(colPurple)
+var ruleStyle = lipgloss.NewStyle().Foreground(colPurple)
+var dividerStyle = lipgloss.NewStyle().Foreground(colGray)
+var recvSenderStyle = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+
+// Message bubbles. Border color matches the fill so the rounded corners read
+// as part of the bubble. No Width is set — bubbles hug pre-wrapped text.
+var sentBubbleStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(colPurple).
+	Background(colPurple).
+	Foreground(colWhite).
+	Padding(0, 1)
+
+var recvBubbleStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(colDarkBub).
+	Background(colDarkBub).
+	Foreground(colWhite).
+	Padding(0, 1)
+
+// ---- Input box + decorative Send button ----
+var inputBoxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(colPurple).
+	Padding(0, 1)
+
+var sendButtonStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(colPurple).
+	Background(colPurple).
+	Foreground(colWhite).
 	Bold(true).
-	Foreground(lipgloss.Color("15")).
-	Background(lipgloss.Color("60"))
+	Padding(0, 1).
+	MarginLeft(1)
 
-// Dimmed selection — shown when the thread list is NOT the active pane (Read
-// state), so the highlight reads as "remembered selection" rather than focus.
-var selectedThreadDimStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("250")).
-	Background(lipgloss.Color("238"))
-var unselectedThreadStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("252"))
-
-
-//unread marker
-var unreadBadgeStyle = lipgloss.NewStyle(). 
-	Foreground(lipgloss.Color("205")). // pink
-	Bold(true)
-
-//stat bar
-var statusBarStyle = lipgloss.NewStyle(). 
-	Foreground(lipgloss.Color("252")).
+// ---- Status / key bar ----
+var statusBarStyle = lipgloss.NewStyle().
+	Foreground(colWhite).
 	Background(lipgloss.Color("236"))
 
-//Mode indicator 
 var modeStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("15")).  // white
-	Background(lipgloss.Color("62")). // purple
+	Foreground(colWhite).
+	Background(colPurple).
 	Padding(0, 1)
 
-// convo message styles 
-var myMessageStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("15")). 
-	Background(lipgloss.Color("62")). 
-	Padding(0, 1)
+var placeholderStyle = lipgloss.NewStyle().
+	Foreground(colGray).
+	Italic(true)
 
-var theirMessageStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("252")). 
-	Background(lipgloss.Color("237")). 
-	Padding(0, 1)
+var searchBarStyle = lipgloss.NewStyle().Foreground(colPurple)
 
-var timestampStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("240"))
-
-var usernameStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("86")). 
-	Bold(true)
-	
-//Panel border left and right
+// ---- Panel borders (focus-aware swap happens in View) ----
 var leftPanelBaseStyle = lipgloss.NewStyle().
 	BorderRight(true).
 	BorderStyle(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("240"))
+	BorderForeground(colGray)
 
 var rightPanelBaseStyle = lipgloss.NewStyle()
 
-var placeholderStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("240")). // dim gray
-	Italic(true)
-
-// Search bar style
-var searchBarStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("86")) // cyan
-
-// Login styles
+// ---- Login styles ----
 var loginBoxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("62")).
+	BorderForeground(colPurple).
 	Padding(1, 3)
 
 var loginTitleStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("15")).
+	Foreground(colWhite).
 	MarginBottom(1)
 
 var loginErrorStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("196")).
+	Foreground(lipgloss.Color("#FF6B6B")).
 	Bold(true)
 
-var loginLabelStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("252"))
-
-
+var loginLabelStyle = lipgloss.NewStyle().Foreground(colWhite)
 
 func (m Model) View() string {
 
 	if m.height == 0 || m.width == 0 {
 		return "not yet rendered"
-	}  
+	}
 	//load header and stat bar
 	header := m.renderHeader()
 	statusBar := m.renderStatusBar()
@@ -122,21 +164,23 @@ func (m Model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, loginBody, statusBar)
 	}
 
-	leftWidth := m.width/3
-	rightWidth := m.width - leftWidth -1
+	leftWidth := m.width / 3
+	rightWidth := m.width - leftWidth - 1
 
 	leftPanel := m.renderThreadList(leftWidth, bodyHeight)
 	rightPanel := m.renderConversation(rightWidth, bodyHeight)
 
-	// Focus-aware border colors
+	// Focus-aware border colors — accent on the active pane, dim gray on the
+	// other. This is the highest-impact polish cue, wired to the real focus
+	// state (m.focus), not a new field.
 	leftStyle := leftPanelBaseStyle
 	rightStyle := rightPanelBaseStyle
 	if m.focus == FocusThreadList {
-		leftStyle = leftStyle.BorderForeground(lipgloss.Color("86"))
+		leftStyle = leftStyle.BorderForeground(colPurple)
 	} else {
 		rightStyle = rightStyle.BorderLeft(true).
 			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("86"))
+			BorderForeground(colPurple)
 	}
 
 	left := leftStyle.
@@ -149,27 +193,25 @@ func (m Model) View() string {
 		Height(bodyHeight).
 		Render(rightPanel)
 
-body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-return lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)
-
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)
 
 }
 
+func (m Model) renderHeader() string {
+	title := "Instagram TUI"
+	var status string
+	if m.connected {
+		status = fmt.Sprintf("Connected...| @%s", m.username)
 
-func (m Model) renderHeader() string{
- title := "Instagram TUI"
- var status string
- if m.connected {
-	status = fmt.Sprintf("Connected...| @%s", m.username)
-
- } else {
-	status = "Disconnected..."
- }  
- spacerWidth := m.width - lipgloss.Width(title) - lipgloss.Width(status) - 2 // -2 for padding
+	} else {
+		status = "Disconnected..."
+	}
+	spacerWidth := m.width - lipgloss.Width(title) - lipgloss.Width(status) - 2 // -2 for padding
 	if spacerWidth < 1 {
 		spacerWidth = 1
-	} 
+	}
 	spacer := strings.Repeat(" ", spacerWidth)
 
 	return headerStyle.
@@ -178,161 +220,227 @@ func (m Model) renderHeader() string{
 
 }
 
-
-
-
 func (m Model) renderThreadList(width, height int) string {
 	var b strings.Builder
 
-	// Search bar: only shown while actively searching. The "/ search" hint
-	// now lives in the contextual status bar, not as an always-on header.
-	if m.mode == ModeSearch {
-		b.WriteString(searchBarStyle.Render("/ "))
-		b.WriteString(m.searchInput.View())
-		b.WriteString("\n\n")
+	// --- Title + connection line ---
+	b.WriteString(sidebarTitleStyle.Render("INSTAGRAM TUI"))
+	b.WriteString("\n")
+	if m.connected {
+		name := m.username
+		if name == "" {
+			name = "…"
+		}
+		b.WriteString(onlineDotStyle.Render("●") + " " + mutedStyle.Render("Connected as "+name))
+	} else {
+		b.WriteString(mutedStyle.Render("○ Disconnected"))
 	}
+	b.WriteString("\n\n")
 
-	// Determine which threads to display
+	// --- CHATS section header with right-aligned count badge ---
+	chatsHeader := sectionHeaderStyle.Render("CHATS")
+	countBadge := badgeStyle.Render(fmt.Sprintf("%d", len(m.threads)))
+	gap := width - lipgloss.Width(chatsHeader) - lipgloss.Width(countBadge)
+	if gap < 1 {
+		gap = 1
+	}
+	b.WriteString(chatsHeader + strings.Repeat(" ", gap) + countBadge)
+	b.WriteString("\n")
+
+	// --- Search bar (only while actively searching) ---
+	if m.mode == ModeSearch {
+		b.WriteString(searchBarStyle.Render("/ ") + m.searchInput.View())
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// --- STATUS block built up front so we can reserve room for it ---
+	statusBlock := m.renderStatusBlock(width)
+	statusLines := strings.Count(statusBlock, "\n") + 1
+
+	// --- Thread rows (with scroll window) ---
 	threads := m.getVisibleThreads()
+	headerLines := strings.Count(b.String(), "\n")
+	avail := height - headerLines - statusLines - 1
+	if avail < 1 {
+		avail = 1
+	}
+	maxVisible := max(1, avail/3) // each row is ~3 lines (name + preview + gap)
 
 	if len(threads) == 0 {
+		// Preserve the nil-vs-empty distinction: nil = not loaded yet,
+		// non-nil empty = loaded but zero matches/threads.
 		if m.threads == nil {
 			b.WriteString(placeholderStyle.Render("Loading threads..."))
 		} else {
 			b.WriteString(placeholderStyle.Render("No conversations"))
 		}
-		return b.String()
-	}
-
-	// Thread list scrolling — each thread takes ~3 lines (name + preview + gap)
-	maxVisible := max(1, (height-2)/3) // subtract 2 for search bar + blank line
-	offset := m.threadListOffset
-
-	end := offset + maxVisible
-	if end > len(threads) {
-		end = len(threads)
-	}
-	visibleSlice := threads[offset:end]
-
-	// Render each thread entry
-	for vi, idx := range visibleSlice {
-		i := offset + vi // logical index in full visible list
-		thread := m.threads[idx]
-
-		var indicator string
-		if i == m.cursor {
-			indicator = "> "
-		} else {
-			indicator = "  "
+		b.WriteString("\n")
+	} else {
+		offset := m.threadListOffset
+		if offset > len(threads) {
+			offset = 0
 		}
-
-		// Build display name from first user (or "Group" for group chats)
-		displayName := getThreadDisplayName(thread)
-
-		maxNameWidth := width - 8
-		if maxNameWidth < 4 {
-			maxNameWidth = 4
-		}
-		if lipgloss.Width(displayName) > maxNameWidth {
-			runes := []rune(displayName)
-			for len(runes) > 0 && lipgloss.Width(string(runes))+1 > maxNameWidth {
-				runes = runes[:len(runes)-1]
-			}
-			displayName = string(runes) + "…"
-		}
-
-		// Unread badge
-		var badge string
-		if thread.UnreadCount > 0 {
-			badge = unreadBadgeStyle.Render(fmt.Sprintf(" [%d]", thread.UnreadCount))
-		}
-
-		// Compose the line. The selected row dims when the conversation pane
-		// holds focus (Read), keeping the spatial active-pane cue obvious.
-		selStyle := selectedThreadStyle
-		if m.focus == FocusConversation {
-			selStyle = selectedThreadDimStyle
-		}
-
-		var line string
-		if i == m.cursor {
-			line = selStyle.Render(indicator+displayName) + badge
-		} else {
-			line = unselectedThreadStyle.Render(indicator+displayName) + badge
-		}
-
-		b.WriteString(line)
-
-		// Preview of last message, dimmed, on the next line
-		previewText := strings.ReplaceAll(thread.LastMessage.Text, "\n", " ")
-		preview := truncate(previewText, width-4)
-		if preview != "" {
+		end := min(offset+maxVisible, len(threads))
+		for vi, idx := range threads[offset:end] {
+			i := offset + vi
+			b.WriteString(m.renderThreadRow(width, m.threads[idx], i == m.cursor))
 			b.WriteString("\n")
-			b.WriteString("  " + placeholderStyle.Render(preview))
 		}
-
-		b.WriteString("\n")
+		if offset > 0 {
+			b.WriteString(mutedStyle.Render(fmt.Sprintf("  ↑ %d more", offset)) + "\n")
+		}
+		if rem := len(threads) - end; rem > 0 {
+			b.WriteString(mutedStyle.Render(fmt.Sprintf("  ↓ %d more", rem)) + "\n")
+		}
 	}
 
-	// Scroll indicators
-	if offset > 0 {
-		b.WriteString(placeholderStyle.Render(fmt.Sprintf("  ... %d more above", offset)))
+	// --- Filler pushes the STATUS block to the bottom of the sidebar ---
+	usedLines := strings.Count(b.String(), "\n")
+	filler := height - usedLines - statusLines
+	for i := 0; i < filler; i++ {
 		b.WriteString("\n")
 	}
-	remaining := len(threads) - end
-	if remaining > 0 {
-		b.WriteString(placeholderStyle.Render(fmt.Sprintf("  ... %d more below", remaining)))
-		b.WriteString("\n")
-	}
+	b.WriteString(statusBlock)
 
 	return b.String()
 }
+
+// renderThreadRow renders one thread as a two-line block: a name + right-aligned
+// timestamp line, and an italic preview line. The selected row gets a left
+// accent bar and a tinted background; unselected rows get a matching indent.
+func (m Model) renderThreadRow(width int, thread Thread, selected bool) string {
+	inner := width - 1 // 1 col reserved for the accent bar / indent
+	if inner < 8 {
+		inner = 8
+	}
+
+	ts := formatTimestamp(threadTimestamp(thread))
+	tsR := timestampStyle.Render(ts)
+	tsW := lipgloss.Width(tsR)
+
+	var badge string
+	if thread.UnreadCount > 0 {
+		badge = unreadBadgeStyle.Render(fmt.Sprintf(" %d", thread.UnreadCount))
+	}
+
+	nameMax := inner - tsW - lipgloss.Width(badge) - 1
+	if nameMax < 4 {
+		nameMax = 4
+	}
+	nameR := threadNameStyle.Render(truncate(getThreadDisplayName(thread), nameMax))
+
+	gap := inner - lipgloss.Width(nameR) - lipgloss.Width(badge) - tsW
+	if gap < 1 {
+		gap = 1
+	}
+	topLine := nameR + badge + strings.Repeat(" ", gap) + tsR
+
+	previewText := strings.ReplaceAll(thread.LastMessage.Text, "\n", " ")
+	previewLine := previewStyle.Render(truncate(previewText, inner))
+
+	block := lipgloss.JoinVertical(lipgloss.Left, topLine, previewLine)
+	if selected {
+		return selectedRowStyle.Width(inner).Render(block)
+	}
+	return unselectedRowStyle.Width(width).Render(block)
+}
+
+// renderStatusBlock renders the bottom-of-sidebar STATUS panel.
+func (m Model) renderStatusBlock(width int) string {
+	var b strings.Builder
+	b.WriteString(mutedStyle.Render(strings.Repeat("─", max(1, width))))
+	b.WriteString("\n")
+	b.WriteString(sectionHeaderStyle.Render("STATUS"))
+	b.WriteString("\n")
+
+	// API line is driven by the real connection state.
+	if m.connected {
+		b.WriteString(statusOkStyle.Render("✓") + " " + mutedStyle.Render("API: Connected"))
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(colPink).Render("✗") + " " + mutedStyle.Render("API: Disconnected"))
+	}
+	b.WriteString("\n")
+
+	// TODO: no real-time sync status field on the Model — decorative stub.
+	b.WriteString(statusInfoStyle.Render("ℹ") + " " + mutedStyle.Render("Sync: Real-time"))
+	b.WriteString("\n")
+
+	// TODO: no "last check" timestamp is tracked anywhere — placeholder dash.
+	b.WriteString(statusClockStyle.Render("◔") + " " + mutedStyle.Render("Last check: —"))
+
+	return b.String()
+}
+
 func (m Model) renderConversation(width, height int) string {
-	// No convo loaded, show placeholder
+	// No convo loaded — show placeholder.
 	if m.activeThread == nil {
-		msg := "Press Enter to load conversation"
-		return placeholderStyle.Render(msg)
+		return placeholderStyle.Render("Select a conversation and press Enter to open it")
 	}
 
 	var b strings.Builder
 
-	// --- Header (static, 2 lines) ---
-	displayName := getThreadDisplayName(*m.activeThread)
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("15")).
-		Render("@" + displayName)
-	b.WriteString(header)
+	// --- Header line 1: name + right-aligned @handle and kebab ---
+	name := getThreadDisplayName(*m.activeThread)
+	nameR := convNameStyle.Render(name)
+	handleR := convHandleStyle.Render("@"+name) + " " + mutedStyle.Render("⋮")
+	gap := width - lipgloss.Width(nameR) - lipgloss.Width(handleR)
+	if gap < 1 {
+		gap = 1
+	}
+	b.WriteString(nameR + strings.Repeat(" ", gap) + handleR)
 	b.WriteString("\n")
 
-	// Scroll indicator or plain separator
+	// --- Header line 2: presence ---
+	// TODO: no presence / "active now" data exists on User or Thread — static stub.
+	b.WriteString(mutedStyle.Render("Active now"))
+	b.WriteString("\n")
+
+	// --- Header line 3: accent rule (doubles as scroll indicator) ---
 	if !m.messageViewport.AtBottom() {
-		scrollPct := int(m.messageViewport.ScrollPercent() * 100)
-		indicator := fmt.Sprintf("── %d%% ──", scrollPct)
-		b.WriteString(placeholderStyle.Render(indicator))
-		// Fill rest of line with separator
-		remaining := width - lipgloss.Width(indicator)
-		if remaining > 0 {
-			b.WriteString(placeholderStyle.Render(strings.Repeat("─", remaining)))
+		pct := int(m.messageViewport.ScrollPercent() * 100)
+		ind := fmt.Sprintf("── %d%% ", pct)
+		rest := width - lipgloss.Width(ind)
+		if rest < 0 {
+			rest = 0
 		}
+		b.WriteString(ruleStyle.Render(ind + strings.Repeat("─", rest)))
 	} else {
-		b.WriteString(strings.Repeat("─", width))
+		b.WriteString(ruleStyle.Render(strings.Repeat("─", max(1, width))))
 	}
 	b.WriteString("\n")
 
-	// --- Viewport (scrollable messages) ---
+	// --- Scrollable messages ---
 	b.WriteString(m.messageViewport.View())
 	b.WriteString("\n")
 
-	// --- Input (static, 2 lines) ---
-	b.WriteString("\n")
-	if m.mode == ModeInsert {
-		b.WriteString("> " + m.messageInput.View())
-	} else {
-		b.WriteString(placeholderStyle.Render("Press Enter to reply"))
-	}
+	// --- Input box + Send ---
+	b.WriteString(m.renderInputBar(width))
 
 	return b.String()
+}
+
+// renderInputBar renders the rounded input box plus the decorative Send button.
+// The whole row is exactly 3 lines tall (matching conversationInputHeight).
+func (m Model) renderInputBar(width int) string {
+	// Total row = inputBox(content+4 frame) + sendBtn(8 + 1 margin) = width.
+	boxContent := width - 13
+	if boxContent < 10 {
+		boxContent = 10
+	}
+
+	var inner string
+	if m.mode == ModeInsert {
+		mi := m.messageInput // value copy: bounding Width here only affects this render
+		mi.Width = boxContent
+		inner = mi.View()
+	} else {
+		inner = placeholderStyle.Render(truncate("Type a message... (Enter to send)", boxContent))
+	}
+
+	inputBox := inputBoxStyle.Width(boxContent).Render(inner)
+	sendBtn := sendButtonStyle.Render("Send")
+	return lipgloss.JoinHorizontal(lipgloss.Top, inputBox, sendBtn)
 }
 
 func (m Model) renderLoginScreen(width, height int) string {
@@ -352,7 +460,7 @@ func (m Model) renderLoginScreen(width, height int) string {
 		b.WriteString("\n\n")
 
 		urlStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("86")).
+			Foreground(colPurple).
 			Bold(true)
 		b.WriteString(urlStyle.Render(m.challengeUrl))
 		b.WriteString("\n\n")
@@ -485,46 +593,99 @@ func (m Model) buildMessageContent() string {
 		}
 	}
 
+	// Centered day divider.
+	// TODO: static label — not derived from per-message dates (no day grouping).
+	divider := dividerStyle.Render("── Today ──")
+	b.WriteString(lipgloss.PlaceHorizontal(m.viewportWidth(), lipgloss.Center, divider))
+	b.WriteString("\n\n")
+
 	b.WriteString(m.renderMessages(m.activeMessages))
 
 	return b.String()
 }
 
-// renderMessages renders a slice of messages into a string.
+// renderMessages renders a slice of messages as aligned, wrapped chat bubbles.
 func (m Model) renderMessages(messages []Message) string {
 	w := m.viewportWidth()
+	maxBubble := max(16, w*3/4) // bubble caps at ~3/4 pane width
+	contentW := maxBubble - 4   // minus rounded border (2) + padding (2)
+	if contentW < 8 {
+		contentW = 8
+	}
+
 	var b strings.Builder
 
 	for _, msg := range messages {
 		ts := formatTimestamp(msg.Timestamp)
 		isMe := msg.UserId == m.userPK
+		wrapped := wrapText(msg.Text, contentW)
 
 		if isMe {
-			// Right-aligned: my messages
-			bubble := myMessageStyle.Render(msg.Text)
-			bubbleWidth := lipgloss.Width(bubble)
-			pad := w - bubbleWidth
-			if pad < 0 {
-				pad = 0
-			}
-			b.WriteString(strings.Repeat(" ", pad) + bubble + "\n")
-			// Right-align timestamp too
-			tsRendered := timestampStyle.Render(ts)
-			tsPad := w - lipgloss.Width(tsRendered)
-			if tsPad < 0 {
-				tsPad = 0
-			}
-			b.WriteString(strings.Repeat(" ", tsPad) + tsRendered + "\n\n")
+			// Right-aligned: my messages, accent bubble.
+			bubble := sentBubbleStyle.Render(wrapped)
+			// TODO: ✓✓ read receipt is decorative — Message has no read state.
+			tsLine := timestampStyle.Render(ts + " ✓✓")
+			block := lipgloss.JoinVertical(lipgloss.Right, bubble, tsLine)
+			b.WriteString(lipgloss.PlaceHorizontal(w, lipgloss.Right, block))
+			b.WriteString("\n\n")
 		} else {
-			// Left-aligned: their messages with username label
-			sender := usernameStyle.Render(getUsernameById(m.activeThread.Users, msg.UserId))
-			b.WriteString(sender + "\n")
-			b.WriteString(theirMessageStyle.Render(msg.Text) + "\n")
-			b.WriteString(timestampStyle.Render(ts) + "\n\n")
+			// Left-aligned: their messages with a green sender label.
+			sender := recvSenderStyle.Render("● " + getUsernameById(m.activeThread.Users, msg.UserId))
+			bubble := recvBubbleStyle.Render(wrapped)
+			tsLine := timestampStyle.Render(ts)
+			block := lipgloss.JoinVertical(lipgloss.Left, sender, bubble, tsLine)
+			b.WriteString(lipgloss.PlaceHorizontal(w, lipgloss.Left, block))
+			b.WriteString("\n\n")
 		}
 	}
 
 	return b.String()
+}
+
+// wrapText word-wraps s to at most `width` display columns per line, hard-
+// breaking any single token longer than the width. Existing newlines are kept.
+func wrapText(s string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+		cur := ""
+		for _, wd := range words {
+			// Hard-break tokens that don't fit on a line by themselves.
+			for lipgloss.Width(wd) > width {
+				if cur != "" {
+					out = append(out, cur)
+					cur = ""
+				}
+				runes := []rune(wd)
+				take := runes
+				for lipgloss.Width(string(take)) > width {
+					take = take[:len(take)-1]
+				}
+				out = append(out, string(take))
+				wd = string(runes[len(take):])
+			}
+			switch {
+			case cur == "":
+				cur = wd
+			case lipgloss.Width(cur)+1+lipgloss.Width(wd) <= width:
+				cur += " " + wd
+			default:
+				out = append(out, cur)
+				cur = wd
+			}
+		}
+		if cur != "" {
+			out = append(out, cur)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func (m Model) renderStatusBar() string {
@@ -572,10 +733,6 @@ func (m Model) renderStatusBar() string {
 		Render(left + spacer + modeBadge)
 }
 
-
-
-
-
 func (m Model) getVisibleThreads() []int {
 	if m.filteredIndices != nil {
 		return m.filteredIndices
@@ -607,7 +764,14 @@ func getThreadDisplayName(t Thread) string {
 	return "Unknown"
 }
 
-
+// threadTimestamp returns the best available time for a thread row: the last
+// message time if set, otherwise the thread's last-activity time.
+func threadTimestamp(t Thread) int64 {
+	if t.LastMessage.Timestamp != 0 {
+		return t.LastMessage.Timestamp
+	}
+	return t.LastActivityAt
+}
 
 func formatTimestamp(ts int64) string {
 	if ts == 0 {
@@ -625,7 +789,7 @@ func formatTimestamp(ts int64) string {
 		return t.Format("3:04 PM")
 	}
 	return t.Format("Jan 2, 3:04 PM")
-	
+
 }
 
 // getUsernameById finds a username from the thread's user list by PK.
