@@ -30,6 +30,13 @@ function debugLog(msg: string): void {
   if (DEBUG) process.stderr.write(msg);
 }
 
+// Always-on lifecycle logging (routed to backend.log by the TUI). Keep these
+// lines NON-SENSITIVE — own-account handles only, never tokens/cookies/session
+// material. Anything secret belongs behind debugLog (IG_DEBUG-gated) above.
+function infoLog(msg: string): void {
+  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
+}
+
 export class InstagramClient {
   private ig: IgApiClientRealtime;
   private sessionPath: string;
@@ -75,6 +82,7 @@ export class InstagramClient {
       await this.saveSession();
       await this.runPostLoginFlow();
 
+      infoLog(`[login] success as @${loggedInUser.username}`);
       return this.mapUser(loggedInUser);
     } catch (error) {
       if (error instanceof IgLoginBadPasswordError) {
@@ -190,8 +198,10 @@ export class InstagramClient {
       debugLog(`[session] authorization type=${typeof auth}, starts=${auth?.substring?.(0, 20)}\n`);
       debugLog(`[session] parsedAuthorization has sessionid=${!!parsed?.sessionid}\n`);
 
+      infoLog(`[session] restored as @${user.username}`);
       return this.mapUser(user);
     } catch {
+      infoLog('[session] no valid saved session — login required');
       return null;
     }
   }
@@ -493,6 +503,7 @@ export class InstagramClient {
             snapshot_at_ms: inbox.snapshot_at_ms,
           },
         });
+        infoLog('[realtime] connected');
         return; // Success — exit retry loop.
       } catch (error) {
         if (attempt < retries - 1) {

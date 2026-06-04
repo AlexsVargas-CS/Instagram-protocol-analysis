@@ -53,6 +53,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ThreadsLoadedMsg:
 		if msg.Err != nil {
+			if isSessionExpired(msg.Err) {
+				return m, m.enterRelogin("Session expired — please log in again.")
+			}
 			m.statusMsg = "Failed to load threads: " + msg.Err.Error()
 			return m, nil
 		}
@@ -98,8 +101,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MessagesLoadedMsg:
 		if msg.Err != nil {
-			m.statusMsg = "Failed to load messages: " + msg.Err.Error()
 			m.loadingOlder = false
+			if isSessionExpired(msg.Err) {
+				return m, m.enterRelogin("Session expired — please log in again.")
+			}
+			m.statusMsg = "Failed to load messages: " + msg.Err.Error()
 			return m, nil
 		}
 		// Store pagination metadata.
@@ -150,18 +156,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case MessageSentMsg:
 		if msg.Err != nil {
+			if isSessionExpired(msg.Err) {
+				return m, m.enterRelogin("Session expired — please log in again.")
+			}
 			m.statusMsg = "Send failed: " + msg.Err.Error()
 		}
 		return m, nil
 
 	case MarkReadMsg:
-		if msg.Err == nil {
-			// Zero out unread count in the thread list.
-			for i := range m.threads {
-				if m.threads[i].ThreadID == msg.ThreadID {
-					m.threads[i].UnreadCount = 0
-					break
-				}
+		if msg.Err != nil {
+			// markRead failing is non-critical, but a session-expired error
+			// here is the same signal as elsewhere — prompt re-login.
+			if isSessionExpired(msg.Err) {
+				return m, m.enterRelogin("Session expired — please log in again.")
+			}
+			return m, nil
+		}
+		// Zero out unread count in the thread list.
+		for i := range m.threads {
+			if m.threads[i].ThreadID == msg.ThreadID {
+				m.threads[i].UnreadCount = 0
+				break
 			}
 		}
 		return m, nil
@@ -725,6 +740,37 @@ func (m *Model) loadOlderCmd() tea.Cmd {
 	}
 	m.loadingOlder = true
 	return fetchMessagesCmd(m.rpc, threadID, cursor, true)
+}
+
+// isSessionExpired reports whether an RPC error means the Instagram session is
+// no longer valid. The backend raises SessionError for this, which the RPC layer
+// surfaces as "rpc error -32001: Session expired ...". Match on the message text
+// (not a prefix) since the code is shared with auth errors.
+func isSessionExpired(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "Session expired") || strings.Contains(s, "log in again")
+}
+
+// enterRelogin drops the UI back to the username login step after the session
+// expires mid-use, pre-filling the known username for convenience. The backend
+// child stays alive, so re-login reuses the same process and event listener.
+func (m *Model) enterRelogin(reason string) tea.Cmd {
+	m.connected = false
+	m.mode = ModeLogin
+	m.loginStep = LoginStepUsername
+	m.activeThread = nil
+	m.activeMessages = nil
+	m.loadingOlder = false
+	m.loginError = reason
+	if m.username != "" {
+		m.usernameInput.SetValue(m.username)
+	}
+	m.passwordInput.SetValue("")
+	m.passwordInput.Blur()
+	return m.usernameInput.Focus()
 }
 
 func (m Model) updateLoginMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
