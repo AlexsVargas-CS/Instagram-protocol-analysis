@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // RPCRequest is the JSON-RPC request sent to the backend.
@@ -36,38 +36,53 @@ type RPCEvent struct {
 	Data  json.RawMessage `json:"data"`
 }
 
-// RPCClient manages bidirectional JSON-RPC communication with the backend.
+// RPCClient manages bidirectional JSON-RPC communication with the daemon over a
+// WebSocket connection. Each WS frame carries exactly one JSON message, so there
+// is no newline framing — the frame boundary IS the message boundary.
 type RPCClient struct {
-	stdin  io.Writer
-	mu     sync.Mutex // protects writes to stdin
+	conn   *websocket.Conn
+	mu     sync.Mutex // serializes writes (gorilla forbids concurrent writers)
 	nextID atomic.Int64
 
 	pendingMu sync.Mutex
 	pending   map[int64]chan RPCResponse
 
 	Events chan RPCEvent
+
+	closeOnce sync.Once
 }
 
-// NewRPCClient creates an RPCClient and starts the background read loop.
-func NewRPCClient(stdin io.Writer, stdout io.Reader) *RPCClient {
+// NewRPCClient creates an RPCClient over an already-dialed WebSocket connection
+// and starts the background read loop.
+func NewRPCClient(conn *websocket.Conn) *RPCClient {
 	c := &RPCClient{
-		stdin:   stdin,
+		conn:    conn,
 		pending: make(map[int64]chan RPCResponse),
 		Events:  make(chan RPCEvent, 64),
 	}
-	go c.readLoop(stdout)
+	go c.readLoop()
 	return c
 }
 
-// readLoop reads newline-delimited JSON from stdout and dispatches responses
-// to their pending channels and events to the Events channel.
-func (c *RPCClient) readLoop(stdout io.Reader) {
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+// Close tears down the underlying WebSocket connection. The read loop will then
+// observe a read error and emit the "__disconnected" sentinel.
+func (c *RPCClient) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		err = c.conn.Close()
+	})
+	return err
+}
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
+// readLoop reads one JSON message per WebSocket frame and dispatches responses to
+// their pending channels and events to the Events channel.
+func (c *RPCClient) readLoop() {
+	for {
+		_, data, err := c.conn.ReadMessage()
+		if err != nil {
+			break // connection closed or errored — fall through to sentinel
+		}
+		if len(data) == 0 {
 			continue
 		}
 
@@ -76,21 +91,21 @@ func (c *RPCClient) readLoop(stdout io.Reader) {
 			ID    *int64 `json:"id"`
 			Event string `json:"event"`
 		}
-		if err := json.Unmarshal(line, &peek); err != nil {
+		if err := json.Unmarshal(data, &peek); err != nil {
 			continue
 		}
 
 		if peek.Event != "" {
 			// This is an event.
 			var evt RPCEvent
-			if err := json.Unmarshal(line, &evt); err != nil {
+			if err := json.Unmarshal(data, &evt); err != nil {
 				continue
 			}
 			c.Events <- evt
 		} else if peek.ID != nil {
 			// This is a response to a request.
 			var resp RPCResponse
-			if err := json.Unmarshal(line, &resp); err != nil {
+			if err := json.Unmarshal(data, &resp); err != nil {
 				continue
 			}
 			c.pendingMu.Lock()
@@ -105,7 +120,7 @@ func (c *RPCClient) readLoop(stdout io.Reader) {
 		}
 	}
 
-	// EOF — backend process has exited. Send sentinel event.
+	// Connection closed — daemon unreachable. Send sentinel event.
 	c.Events <- RPCEvent{Event: "__disconnected"}
 }
 
@@ -140,7 +155,6 @@ func (c *RPCClient) SendWithTimeout(method string, params map[string]interface{}
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	data = append(data, '\n')
 
 	// Register pending channel before writing to avoid race.
 	ch := make(chan RPCResponse, 1)
@@ -148,9 +162,9 @@ func (c *RPCClient) SendWithTimeout(method string, params map[string]interface{}
 	c.pending[id] = ch
 	c.pendingMu.Unlock()
 
-	// Write to stdin under mutex.
+	// Write one frame under mutex (gorilla forbids concurrent writers).
 	c.mu.Lock()
-	_, err = c.stdin.Write(data)
+	err = c.conn.WriteMessage(websocket.TextMessage, data)
 	c.mu.Unlock()
 	if err != nil {
 		c.pendingMu.Lock()

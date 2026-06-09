@@ -114,9 +114,8 @@ type Model struct {
 	statusMsg string
 	err       error
 
-	// IPC — backend process and RPC client
-	backend *Backend
-	rpc     *RPCClient
+	// IPC — RPC client connected to the daemon over WebSocket
+	rpc *RPCClient
 
 	threads          []Thread
 	cursor           int // index of highlighted thread

@@ -1,4 +1,3 @@
-import * as readline from 'readline';
 import 'dotenv/config';
 import * as crypto from 'crypto';
 import type { IncomingMessage } from 'http';
@@ -8,21 +7,17 @@ import { AuthenticationError, SessionError, InstagramAPIError, User } from './ty
 
 const client = new InstagramClient();
 
-// Daemon mode: the backend is a standalone, network-reachable daemon that holds
-// the session + MQTT across client churn. In daemon mode, stdin EOF does NOT end
-// the process (stdio is just one transport); SIGTERM/SIGINT are the real shutdown
-// signals. Without the flag we behave as the legacy stdio-spawned backend so the
-// current TUI keeps working unchanged (M1: keep both transports in parallel).
-const DAEMON_MODE = process.env.IG_DAEMON === '1';
+// The backend is a standalone, network-reachable daemon: it holds the session +
+// MQTT across client churn and serves WebSocket clients. SIGTERM/SIGINT are the
+// shutdown signals (there is no stdin lifecycle — stdio was removed at M3).
 const WS_PORT = Number(process.env.IG_DAEMON_PORT ?? process.env.IG_WS_PORT ?? 8765);
 
 // Pairing-token auth for the WebSocket transport. Network position is not identity:
 // even over Tailscale, every WS connection must present a per-instance pairing token
 // validated at the handshake. The token (access to the daemon) and the Instagram
 // session (the daemon acting as the account) are separate secrets at separate layers.
-// Stdio is a local pipe and stays unauthenticated. A single token (IG_PAIRING_TOKEN)
-// and/or a comma-separated list (IG_PAIRING_TOKENS — one per device, individually
-// revocable by editing env) are both accepted.
+// A single token (IG_PAIRING_TOKEN) and/or a comma-separated list (IG_PAIRING_TOKENS
+// — one per device, individually revocable by editing env) are both accepted.
 const PAIRING_TOKENS = parseTokens(process.env.IG_PAIRING_TOKEN, process.env.IG_PAIRING_TOKENS);
 
 function parseTokens(single?: string, list?: string): Set<string> {
@@ -113,12 +108,12 @@ interface Request {
 
 type Outbound = JsonRpcResponse | JsonRpcEvent;
 
-// A single client transport. Each connection (the one stdio pipe, or any number
-// of WebSocket clients) writes through its own send(); responses go to the
-// requesting connection, events fan out to all of them.
+// A single client transport (one per WebSocket client). Each connection writes
+// through its own send(); responses go to the requesting connection, events fan
+// out to all of them.
 interface Connection {
   id: number;
-  kind: 'stdio' | 'ws';
+  kind: 'ws';
   send(msg: Outbound): void;
 }
 
@@ -145,40 +140,7 @@ function broadcast(event: string, data: unknown): void {
   }
 }
 
-// ---- stdio transport (legacy; kept in parallel until M3 migrates the TUI) ----
-
-const stdioConnection: Connection = {
-  id: 0,
-  kind: 'stdio',
-  send(msg) {
-    console.log(JSON.stringify(msg));
-  },
-};
-connections.add(stdioConnection);
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  terminal: false, //not interactive terminl
-});
-
-rl.on('line', async (line: string) => {
-  //goal: dont allow any input other then a valid input
-  let request;
-  try {
-    request = JSON.parse(line);
-  } catch {
-    sendError(stdioConnection, 0, -32700, 'Parse Error');
-    return;
-  }
-  if (typeof request.id !== 'number' || typeof request.method !== 'string') {
-    sendError(stdioConnection, request.id ?? 0, -32600, 'Invalid request');
-    return;
-  }
-
-  await handleRequest(stdioConnection, request);
-});
-
-// ---- WebSocket transport (the daemon's primary transport going forward) ----
+// ---- WebSocket transport (the daemon's only transport) ----
 
 function handleWsConnection(ws: WebSocket): void {
   const conn: Connection = {
@@ -233,15 +195,10 @@ function startWebSocketServer(): void {
   );
   wss.on('connection', (ws) => handleWsConnection(ws));
   wss.on('error', (err) => {
+    // The WS server IS the daemon — a bind failure (e.g. port in use) is fatal.
     const msg = err instanceof Error ? err.message : String(err);
-    if (DAEMON_MODE) {
-      // The WS server IS the daemon — a bind failure is fatal.
-      process.stderr.write(`[ws] fatal: ${msg}\n`);
-      process.exit(1);
-    }
-    // Legacy stdio run (e.g. the current TUI spawned us and a port is taken):
-    // the WS server is a bonus, not required — keep serving stdio.
-    process.stderr.write(`[ws] disabled (${msg}) — stdio transport still active\n`);
+    process.stderr.write(`[ws] fatal: ${msg}\n`);
+    process.exit(1);
   });
 }
 
@@ -265,20 +222,8 @@ async function shutdown(): Promise<void> {
   process.exit(0);
 }
 
-// Stdin EOF means our input pipe closed. In legacy stdio mode that's the TUI
-// telling us to exit (without this, the live MQTT connection would keep the event
-// loop alive and we'd linger as an orphan). In daemon mode stdio is just one
-// transport among many — its EOF only removes that connection; the daemon lives
-// on for WebSocket clients (and the zero-client resting state). SIGTERM/SIGINT
-// cover an explicit kill in both modes.
-rl.on('close', () => {
-  if (DAEMON_MODE) {
-    connections.delete(stdioConnection);
-    infoLog('[stdio] input closed (daemon keeps running)');
-  } else {
-    void shutdown();
-  }
-});
+// The daemon runs until explicitly killed. SIGTERM/SIGINT tear down the live MQTT
+// connection (which would otherwise keep the event loop alive) and exit cleanly.
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());
 

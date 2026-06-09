@@ -15,6 +15,10 @@ packages/backend/dist/
 # Auth session (contains credentials)
 packages/backend/session.json
 
+# TUI daemon config (contains the pairing token)
+daemon.config.json
+packages/tui/daemon.config.json
+
 # Logs (may contain session/token material)
 *.log
 

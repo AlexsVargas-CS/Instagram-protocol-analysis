@@ -10,16 +10,20 @@ import (
 func main() {
 	m := InitialModel()
 
-	// Spawn the TypeScript backend as a child process.
-	backend, err := StartBackend()
+	// Connect to the always-on daemon over WebSocket.
+	cfg, err := LoadDaemonConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start backend: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		os.Exit(1)
 	}
-	defer backend.Stop()
+	rpc, err := DialDaemon(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to connect to daemon: %v\n", err)
+		os.Exit(1)
+	}
+	defer rpc.Close()
 
-	m.backend = backend
-	m.rpc = NewRPCClient(backend.Stdin, backend.Stdout)
+	m.rpc = rpc
 	m.statusMsg = "Connecting..."
 	m.conversationCache = make(map[string][]Message)
 	m.cursorCache = make(map[string]string)
