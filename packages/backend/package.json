@@ -17,10 +17,12 @@
     "dotenv": "^17.2.3",
     "instagram_mqtt": "^1.2.3",
     "instagram-private-api": "^1.46.1",
-    "re2": "^1.23.2"
+    "re2": "^1.23.2",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",
+    "@types/ws": "^8.18.1",
     "nodemon": "^3.1.11",
     "patch-package": "^8.0.1",
     "ts-node": "^10.9.2",
