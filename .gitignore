@@ -19,6 +19,11 @@ packages/backend/session.json
 daemon.config.json
 packages/tui/daemon.config.json
 
+# FCM service-account key (private key — must never be committed)
+packages/backend/fcm-service-account.json
+fcm-service-account.json
+*firebase-adminsdk*.json
+
 # Logs (may contain session/token material)
 *.log
 

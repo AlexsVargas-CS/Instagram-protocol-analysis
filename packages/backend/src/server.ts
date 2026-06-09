@@ -4,6 +4,7 @@ import type { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { InstagramClient } from './instagram';
 import { AuthenticationError, SessionError, InstagramAPIError, User } from './types';
+import { initPush, registerPushToken, sendPush } from './push';
 
 const client = new InstagramClient();
 
@@ -264,6 +265,10 @@ async function handleRequest(conn: Connection, req: Request): Promise<void> {
         result = { success: true };
         break;
       }
+      case 'registerPushToken': {
+        result = registerPushToken(req.params.token as string);
+        break;
+      }
       case 'submitChallenge': {
         const code = req.params.code as string;
         if (!code) {
@@ -314,6 +319,12 @@ function startRealtimeListener(): void {
   client.startRealtime(
     (threadId, message) => {
       broadcast('newMessage', { threadId, message });
+      // "No client connected" = push. Connected sockets are all authenticated
+      // (handshake rejects the rest), so an empty set means nobody is watching
+      // live → fire an FCM push so the phone learns about the DM while closed.
+      if (connections.size === 0) {
+        void sendPush(threadId, message);
+      }
     },
     (error) => {
       broadcast('realtimeError', { error });
@@ -323,6 +334,7 @@ function startRealtimeListener(): void {
 
 async function init(): Promise<void> {
   infoLog('[backend] started');
+  initPush();
   startWebSocketServer();
   const user = await client.loadSession();
   currentUser = user ?? undefined;
