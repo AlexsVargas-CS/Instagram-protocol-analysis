@@ -1,5 +1,7 @@
 import * as readline from 'readline';
 import 'dotenv/config';
+import * as crypto from 'crypto';
+import type { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { InstagramClient } from './instagram';
 import { AuthenticationError, SessionError, InstagramAPIError, User } from './types';
@@ -13,6 +15,78 @@ const client = new InstagramClient();
 // current TUI keeps working unchanged (M1: keep both transports in parallel).
 const DAEMON_MODE = process.env.IG_DAEMON === '1';
 const WS_PORT = Number(process.env.IG_DAEMON_PORT ?? process.env.IG_WS_PORT ?? 8765);
+
+// Pairing-token auth for the WebSocket transport. Network position is not identity:
+// even over Tailscale, every WS connection must present a per-instance pairing token
+// validated at the handshake. The token (access to the daemon) and the Instagram
+// session (the daemon acting as the account) are separate secrets at separate layers.
+// Stdio is a local pipe and stays unauthenticated. A single token (IG_PAIRING_TOKEN)
+// and/or a comma-separated list (IG_PAIRING_TOKENS — one per device, individually
+// revocable by editing env) are both accepted.
+const PAIRING_TOKENS = parseTokens(process.env.IG_PAIRING_TOKEN, process.env.IG_PAIRING_TOKENS);
+
+function parseTokens(single?: string, list?: string): Set<string> {
+  const tokens = new Set<string>();
+  if (single && single.trim()) tokens.add(single.trim());
+  if (list) {
+    for (const t of list.split(',')) {
+      const v = t.trim();
+      if (v) tokens.add(v);
+    }
+  }
+  return tokens;
+}
+
+// Constant-time, length-agnostic compare: hash both sides to a fixed 32 bytes so
+// timingSafeEqual never throws on a length mismatch and no length is leaked.
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function isValidToken(presented: string): boolean {
+  let ok = false;
+  // Check every token (no early return) so timing doesn't reveal which one matched.
+  for (const t of PAIRING_TOKENS) {
+    if (safeEqual(presented, t)) ok = true;
+  }
+  return ok;
+}
+
+// Pull the token from an Authorization: Bearer header, an x-pairing-token header, or
+// a ?token= query param — covering Go, React Native, and browser WS clients. The
+// token value is never logged from any of these sources.
+function extractToken(req: IncomingMessage): string | undefined {
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  const header = req.headers['x-pairing-token'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  try {
+    const url = new URL(req.url ?? '', 'http://localhost');
+    const q = url.searchParams.get('token');
+    if (q) return q;
+  } catch {
+    // malformed request URL — fall through to "no token"
+  }
+  return undefined;
+}
+
+// Validated at the handshake: ws calls this before completing the upgrade. Returning
+// false makes ws reject with HTTP 401 — no Connection is created, no RPC is honored.
+function verifyClient(info: { req: IncomingMessage }): boolean {
+  if (PAIRING_TOKENS.size === 0) {
+    // Fail closed: never honor a networked connection when no token is configured.
+    infoLog('[ws] rejected handshake: no pairing token configured');
+    return false;
+  }
+  const presented = extractToken(info.req);
+  if (!presented || !isValidToken(presented)) {
+    infoLog('[ws] rejected handshake: missing or invalid pairing token');
+    return false;
+  }
+  return true;
+}
 
 interface JsonRpcResponse {
   id: number;
@@ -148,8 +222,15 @@ function handleWsConnection(ws: WebSocket): void {
 }
 
 function startWebSocketServer(): void {
-  const wss = new WebSocketServer({ port: WS_PORT });
-  wss.on('listening', () => infoLog(`[ws] listening on :${WS_PORT}`));
+  const wss = new WebSocketServer({ port: WS_PORT, verifyClient });
+  wss.on('listening', () =>
+    infoLog(
+      `[ws] listening on :${WS_PORT}` +
+        (PAIRING_TOKENS.size
+          ? ` (auth on, ${PAIRING_TOKENS.size} token(s))`
+          : ' — NO PAIRING TOKEN, rejecting all connections'),
+    ),
+  );
   wss.on('connection', (ws) => handleWsConnection(ws));
   wss.on('error', (err) => {
     const msg = err instanceof Error ? err.message : String(err);
