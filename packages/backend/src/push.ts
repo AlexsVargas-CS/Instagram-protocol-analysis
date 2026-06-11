@@ -19,14 +19,39 @@ const DRY_RUN = process.env.IG_FCM_DRY_RUN === '1';
 // a gitignored file is a cheap follow-up if restart churn becomes a problem.)
 const deviceTokens = new Set<string>();
 
+// Persist device tokens across restarts so a daemon redeploy/restart doesn't drop them
+// until each client happens to reconnect. Gitignored JSON array next to session.json.
+const TOKENS_PATH = process.env.IG_PUSH_TOKENS_PATH ?? './device-tokens.json';
+
 function infoLog(line: string): void {
   process.stderr.write(`${line}\n`);
+}
+
+function loadTokens(): void {
+  try {
+    const arr = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
+    if (Array.isArray(arr)) {
+      for (const t of arr) if (typeof t === 'string' && t) deviceTokens.add(t);
+    }
+    if (deviceTokens.size) infoLog(`[push] loaded ${deviceTokens.size} persisted device token(s)`);
+  } catch {
+    // no file yet / unreadable — start empty
+  }
+}
+
+function saveTokens(): void {
+  try {
+    fs.writeFileSync(TOKENS_PATH, JSON.stringify([...deviceTokens]));
+  } catch (err) {
+    infoLog(`[push] WARN could not persist device tokens: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // Initialize FCM from the service-account key, if configured. Safe to call once at
 // boot; without a key (or on failure) the push feature degrades to a no-op so the
 // daemon still runs.
 export function initPush(): void {
+  loadTokens();
   const keyPath = process.env.IG_FCM_KEY_PATH;
   if (!keyPath) {
     infoLog('[push] disabled (no IG_FCM_KEY_PATH configured)');
@@ -53,6 +78,7 @@ export function registerPushToken(token: string): { registered: boolean } {
   const t = (token || '').trim();
   if (!t) return { registered: false };
   deviceTokens.add(t);
+  saveTokens();
   infoLog(`[push] device token registered; ${deviceTokens.size} device(s) total`);
   return { registered: true };
 }
@@ -99,6 +125,7 @@ export async function sendPush(threadId: string, message: Message): Promise<void
       `[push] sent to ${resp.successCount}/${tokens.length} device(s)` +
         `${DRY_RUN ? ' [DRY RUN]' : ''}, ${resp.failureCount} failed`,
     );
+    let pruned = false;
     resp.responses.forEach((r, i) => {
       if (r.success) return;
       const code = r.error?.code ?? '';
@@ -110,10 +137,36 @@ export async function sendPush(threadId: string, message: Message): Promise<void
           code === 'messaging/invalid-argument')
       ) {
         deviceTokens.delete(tok);
+        pruned = true;
         infoLog(`[push] pruned invalid token (${code})`);
       }
     });
+    if (pruned) saveTokens();
   } catch (err) {
     infoLog(`[push] send failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+// Send a daemon-health alert to the operator's own registered devices. Reuses the FCM
+// path (independent of Instagram's MQTT), so a silent daemon failure — e.g. realtime
+// dropping while the process stays up — can still reach the phone as a notification.
+export async function sendSelfAlert(title: string, body: string): Promise<void> {
+  if (!pushEnabled || !messaging || deviceTokens.size === 0) return;
+  const tokens = [...deviceTokens];
+  try {
+    const resp = await messaging.sendEachForMulticast(
+      {
+        tokens,
+        notification: { title, body },
+        data: { kind: 'daemon-alert' },
+        android: { priority: 'high' },
+      },
+      DRY_RUN,
+    );
+    infoLog(
+      `[push] self-alert sent to ${resp.successCount}/${tokens.length}${DRY_RUN ? ' [DRY RUN]' : ''}`,
+    );
+  } catch (err) {
+    infoLog(`[push] self-alert failed: ${err instanceof Error ? err.message : err}`);
   }
 }

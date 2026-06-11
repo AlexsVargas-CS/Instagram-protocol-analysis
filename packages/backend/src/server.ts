@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { InstagramClient } from './instagram';
 import { AuthenticationError, SessionError, InstagramAPIError, User } from './types';
-import { initPush, registerPushToken, sendPush } from './push';
+import { initPush, registerPushToken, sendPush, pushTokenCount, sendSelfAlert } from './push';
 
 const client = new InstagramClient();
 
@@ -124,6 +124,10 @@ let nextConnId = 1;
 // Last known session user, so a WebSocket client that connects AFTER boot still
 // learns the session state (the boot-time sessionRestored broadcast already fired).
 let currentUser: User | undefined;
+
+// Debounce for the realtime-down self-alert push (at most one per window).
+let lastRealtimeAlertAt = 0;
+const REALTIME_ALERT_WINDOW_MS = 30 * 60 * 1000;
 
 function sendResponse(conn: Connection, id: number, result: unknown): void {
   conn.send({ id, result });
@@ -328,6 +332,18 @@ function startRealtimeListener(): void {
     },
     (error) => {
       broadcast('realtimeError', { error });
+      infoLog(`[health] realtime error: ${error}`);
+      // Silent-failure guard: the process can stay up while MQTT is down, so DM pushes
+      // quietly stop. Surface it as a notification to the operator's own phone (FCM is
+      // independent of IG's MQTT). Debounced so a flapping connection doesn't spam.
+      const now = Date.now();
+      if (now - lastRealtimeAlertAt > REALTIME_ALERT_WINDOW_MS) {
+        lastRealtimeAlertAt = now;
+        void sendSelfAlert(
+          '⚠️ Instagram daemon',
+          'Realtime connection lost — you may miss DM pushes until it recovers.',
+        );
+      }
     },
   );
 }
@@ -342,6 +358,16 @@ async function init(): Promise<void> {
   if (user) {
     startRealtimeListener();
   }
+
+  // Liveness heartbeat: a periodic line in the log so you can confirm at a glance the
+  // daemon is alive and see device/client counts. (Process death is handled by systemd
+  // Restart=always; this catches "running but wedged".)
+  setInterval(() => {
+    infoLog(
+      `[health] alive · ${currentUser ? '@' + currentUser.username : 'no session'} · ` +
+        `${pushTokenCount()} device(s) · ${connections.size} client(s)`,
+    );
+  }, 15 * 60 * 1000).unref();
 }
 
 init();
