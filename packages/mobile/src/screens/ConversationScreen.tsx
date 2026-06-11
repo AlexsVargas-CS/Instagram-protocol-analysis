@@ -1,5 +1,14 @@
-import React from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 import { colors } from '../theme';
 import { Message, Thread, User } from '../protocol';
 import { threadName } from './ThreadsScreen';
@@ -10,20 +19,33 @@ export function ConversationScreen({
   user,
   loading,
   onBack,
+  onSend,
 }: {
   thread: Thread;
   messages: Message[];
   user: User | null;
   loading: boolean;
   onBack: () => void;
+  onSend: (text: string) => void;
 }) {
   const meUserId = user?.pk ?? null;
+  const [draft, setDraft] = useState('');
   // Newest at the bottom: render inverted so new messages appear at the bottom and
   // the list opens scrolled to the latest.
   const data = [...messages].reverse();
 
+  const submit = () => {
+    const body = draft.trim();
+    if (!body) return;
+    onSend(body);
+    setDraft('');
+  };
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={styles.back}>‹</Text>
@@ -54,7 +76,28 @@ export function ConversationScreen({
           }}
         />
       )}
-    </View>
+
+      <View style={styles.composer}>
+        <TextInput
+          style={styles.input}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Message…"
+          placeholderTextColor={colors.textDim}
+          multiline
+          onSubmitEditing={submit}
+          blurOnSubmit={false}
+          returnKeyType="send"
+        />
+        <TouchableOpacity
+          style={[styles.sendBtn, draft.trim() ? null : styles.sendBtnDisabled]}
+          onPress={submit}
+          disabled={!draft.trim()}
+        >
+          <Text style={styles.sendBtnText}>Send</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -81,4 +124,36 @@ const styles = StyleSheet.create({
   bubbleTheirs: { backgroundColor: colors.bubbleThem, borderBottomLeftRadius: 4 },
   bubbleText: { color: colors.text, fontSize: 15, lineHeight: 20 },
   empty: { color: colors.textDim, textAlign: 'center', marginTop: 40, fontSize: 14 },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  input: {
+    flex: 1,
+    maxHeight: 120,
+    minHeight: 40,
+    backgroundColor: colors.panel,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    color: colors.text,
+    fontSize: 15,
+  },
+  sendBtn: {
+    marginLeft: 8,
+    backgroundColor: colors.accent,
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: { opacity: 0.4 },
+  sendBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

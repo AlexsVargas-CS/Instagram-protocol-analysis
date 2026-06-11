@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView, StatusBar, StyleSheet, View, Text } from 'react-native';
 import { colors } from './src/theme';
 import { DaemonConfig, loadConfig, saveConfig, clearConfig } from './src/config';
+import { registerForPushNotificationsAsync, addNotificationTapListener } from './src/notifications';
 import { RpcClient, ConnStatus } from './src/rpc';
 import {
   GetMessagesResult,
@@ -31,6 +32,10 @@ export default function App() {
   const clientRef = useRef<RpcClient | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
   activeThreadIdRef.current = activeThreadId;
+  const threadsRef = useRef<Thread[]>([]);
+  threadsRef.current = threads;
+  const pushTokenRef = useRef<string | null>(null);
+  const pendingDeepLinkRef = useRef<string | null>(null);
 
   // Load persisted config on first mount.
   useEffect(() => {
@@ -103,6 +108,25 @@ export default function App() {
     };
   }, [phase, config, handleEvent]);
 
+  // Acquire the FCM device token once we're in the app, then hand it to the daemon.
+  // The token is also (re)sent on every (re)connect below, so a token that resolves
+  // before or after the socket opens is covered either way.
+  useEffect(() => {
+    if (phase !== 'app') return;
+    registerForPushNotificationsAsync().then((token) => {
+      pushTokenRef.current = token;
+      if (token) clientRef.current?.send('registerPushToken', { token }).catch(() => {});
+    });
+  }, [phase]);
+
+  // Re-register the device token whenever the socket (re)opens — the daemon keeps
+  // tokens in memory only, so clients must re-announce after a daemon restart.
+  useEffect(() => {
+    if (connStatus === 'open' && pushTokenRef.current) {
+      clientRef.current?.send('registerPushToken', { token: pushTokenRef.current }).catch(() => {});
+    }
+  }, [connStatus]);
+
   const openThread = useCallback(
     async (thread: Thread) => {
       setActiveThreadId(thread.thread_id);
@@ -128,6 +152,79 @@ export default function App() {
     [messagesByThread],
   );
 
+  // Open a thread by id (used by notification deep-links). If the thread isn't in
+  // the list yet (cold start before threads load), remember it and resolve once
+  // the list arrives.
+  const openThreadById = useCallback(
+    (threadId: string) => {
+      const t = threadsRef.current.find((x) => x.thread_id === threadId);
+      if (t) {
+        openThread(t);
+      } else {
+        pendingDeepLinkRef.current = threadId;
+        fetchThreads();
+      }
+    },
+    [openThread, fetchThreads],
+  );
+
+  // Send a message to the active thread with an optimistic local append. The daemon
+  // drops self-echoes, so the sent message won't arrive back via newMessage — no
+  // duplicate. A failed send is left in place for v1 (a reload reconciles).
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const body = text.trim();
+      const client = clientRef.current;
+      const threadId = activeThreadIdRef.current;
+      if (!body || !client || !threadId) return;
+      const optimistic: Message = {
+        text: body,
+        userId: user?.pk ?? '',
+        timestamp: Date.now() * 1000,
+        itemId: `local-${Date.now()}`,
+      };
+      setMessagesByThread((prev) => {
+        const existing = prev[threadId] || [];
+        return { ...prev, [threadId]: [...existing, optimistic] };
+      });
+      setThreads((prev) => {
+        const idx = prev.findIndex((x) => x.thread_id === threadId);
+        if (idx < 0) return prev;
+        const updated = {
+          ...prev[idx],
+          lastMessage: optimistic,
+          lastActivityAt: optimistic.timestamp,
+        };
+        const next = [...prev];
+        next.splice(idx, 1);
+        return [updated, ...next];
+      });
+      try {
+        await client.send('sendMessage', { thread_id: threadId, text: body });
+      } catch {
+        // transient; the message stays optimistically appended
+      }
+    },
+    [user],
+  );
+
+  // Deep-link: tapping a push (foreground/background or cold start) opens its thread.
+  useEffect(() => {
+    if (phase !== 'app') return;
+    return addNotificationTapListener(openThreadById);
+  }, [phase, openThreadById]);
+
+  // Resolve a pending deep-link once the thread list contains the target thread.
+  useEffect(() => {
+    const id = pendingDeepLinkRef.current;
+    if (!id) return;
+    const t = threads.find((x) => x.thread_id === id);
+    if (t) {
+      pendingDeepLinkRef.current = null;
+      openThread(t);
+    }
+  }, [threads, openThread]);
+
   const onSaveConfig = useCallback((cfg: DaemonConfig) => {
     saveConfig(cfg).then(() => {
       setConfig(cfg);
@@ -148,7 +245,7 @@ export default function App() {
   }, []);
 
   const activeThread = activeThreadId
-    ? threads.find((t) => t.thread_id === activeThreadId) ?? null
+    ? (threads.find((t) => t.thread_id === activeThreadId) ?? null)
     : null;
 
   let body: React.ReactNode;
@@ -168,6 +265,7 @@ export default function App() {
         user={user}
         loading={loadingMessages}
         onBack={() => setActiveThreadId(null)}
+        onSend={sendMessage}
       />
     );
   } else {
