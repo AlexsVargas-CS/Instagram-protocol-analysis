@@ -27,3 +27,26 @@ export async function clearConfig(): Promise<void> {
   await SecureStore.deleteItemAsync(ADDR_KEY);
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
+
+// Pairing QR payload — kept in lockstep with the daemon generator
+// (packages/backend/src/pair-qr.ts). The `t` type tag lets the scanner reject
+// unrelated QR codes; `v` allows the format to evolve.
+const PAYLOAD_TYPE = 'igdaemon-pair';
+
+// Parse a scanned QR string into a DaemonConfig, or null if it isn't a valid
+// pairing payload (wrong type, malformed JSON, or missing fields).
+export function parsePairingPayload(raw: string): DaemonConfig | null {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof obj !== 'object' || obj === null) return null;
+  const o = obj as Record<string, unknown>;
+  if (o.t !== PAYLOAD_TYPE) return null;
+  const address = typeof o.address === 'string' ? o.address.trim() : '';
+  const token = typeof o.token === 'string' ? o.token.trim() : '';
+  if (!address || !token) return null;
+  return { address, token };
+}

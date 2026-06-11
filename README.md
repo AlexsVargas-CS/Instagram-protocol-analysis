@@ -232,6 +232,20 @@ First launch asks for the **daemon address** (`host:port` on your LAN or tailnet
 **pairing token** (stored in the device secure store). With Tailscale on the phone, use
 the daemon's tailnet IP and it works from anywhere.
 
+Instead of typing those by hand, tap **Scan QR code** and point the camera at a pairing
+QR generated on the daemon host:
+
+```bash
+cd packages/backend
+npm run pair-qr -- <host:port>      # e.g. npm run pair-qr -- 100.116.234.121:8765
+```
+
+The command reads the pairing token from `IG_PAIRING_TOKEN`/`IG_PAIRING_TOKENS` and the
+address from the argument (or `IG_DAEMON_ADDR`), then prints a scannable QR encoding both.
+Scanning prefills the address + token so you can review them before tapping **Connect**.
+(QR scanning uses `expo-camera`, a native module — a dev build predating it shows a
+"Camera unavailable" notice; rebuild to enable scanning. Manual entry always works.)
+
 ### Push notifications
 
 The daemon sends straight to **FCM v1** via `firebase-admin` (no Expo push service), so

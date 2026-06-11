@@ -23,7 +23,16 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-secure-store", "expo-notifications"],
+    "plugins": [
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to scan the daemon pairing QR code."
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "a313378a-1ca9-4368-ac05-7a21c077b376"
