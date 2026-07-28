@@ -1,12 +1,16 @@
 {
   "devDependencies": {
+    "concurrently": "^10.0.4",
     "prettier": "^3.8.1"
   },
-"scripts": {
-  "format": "prettier --write './**/*.{js,jsx,ts,tsx,css,md,json}' --config ./.prettierrc",
-  "setup": "npm --prefix packages/backend install",
-  "build": "npm --prefix packages/backend run build",
-  "start": "npm run build && cd packages/tui && go run .",
-  "tui": "cd packages/tui && go run ."
-}
+  "scripts": {
+    "format": "prettier --write './**/*.{js,jsx,ts,tsx,css,md,json}' --config ./.prettierrc",
+    "setup": "npm --prefix packages/backend install",
+    "build": "npm --prefix packages/backend run build",
+    "start": "npm run build && cd packages/tui && go run .",
+    "tui": "cd packages/tui && go run .",
+    "daemon": "npm --prefix packages/backend run start",
+    "metro": "npm --prefix packages/mobile run start",
+    "mobile": "npm run build && concurrently -n daemon,metro -c blue,green \"npm:daemon\" \"npm:metro\""
+  }
 }
