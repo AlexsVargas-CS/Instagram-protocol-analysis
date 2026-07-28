@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { SafeAreaView, StatusBar, StyleSheet, View, Text } from 'react-native';
+import { Platform, SafeAreaView, StatusBar, StyleSheet, View, Text } from 'react-native';
 import { colors } from './src/theme';
 import { DaemonConfig, loadConfig, saveConfig, clearConfig } from './src/config';
 import { registerForPushNotificationsAsync, addNotificationTapListener } from './src/notifications';
@@ -300,7 +300,13 @@ function dedupeThreads(threads: Thread[]): Thread[] {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
+  // RN core's SafeAreaView only insets on iOS (Android renders it as a plain View),
+  // so Android needs the status bar height added back manually.
+  root: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: colors.textDim, fontSize: 16 },
 });
