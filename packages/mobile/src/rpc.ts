@@ -59,16 +59,24 @@ export class RpcClient {
     });
     this.ws = ws;
 
-    ws.onopen = () => this.onStatus('open');
-    ws.onmessage = (e: any) => this.handleMessage(e?.data);
-    ws.onerror = () => {
-      // onclose fires next; reconnect is handled there.
-    };
-    ws.onclose = () => {
+    let settled = false;
+    const settleAsClosed = (reason: string, err?: any) => {
+      // onclose isn't guaranteed to follow onerror on every platform (seen on
+      // Android: a cleartext/handshake failure can fire only onerror), which
+      // left the client stuck in "connecting" forever with no retry. Drive the
+      // same recovery path from either event, once.
+      if (settled) return;
+      settled = true;
+      console.warn(`[rpc] websocket ${reason}`, err?.message ?? err ?? '');
       this.failAllPending(new Error('connection closed'));
       this.onStatus('closed');
       if (!this.closedByUser) this.scheduleReconnect();
     };
+
+    ws.onopen = () => this.onStatus('open');
+    ws.onmessage = (e: any) => this.handleMessage(e?.data);
+    ws.onerror = (e: any) => settleAsClosed('error', e);
+    ws.onclose = (e: any) => settleAsClosed('closed', e?.reason || e?.code);
   }
 
   private handleMessage(raw: any): void {
@@ -95,7 +103,11 @@ export class RpcClient {
     }
   }
 
-  send(method: string, params: Record<string, unknown> = {}, timeout = DEFAULT_TIMEOUT): Promise<any> {
+  send(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeout = DEFAULT_TIMEOUT,
+  ): Promise<any> {
     return new Promise((resolve, reject) => {
       const ws = this.ws;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
