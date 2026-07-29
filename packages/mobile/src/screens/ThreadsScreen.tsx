@@ -14,6 +14,7 @@ import { colors, density, fonts, layout, radius, spring } from '../theme';
 import { Thread, User } from '../protocol';
 import { ConnStatus } from '../rpc';
 import { Monogram, Toast, TypingDots } from '../components';
+import { useBackHandler } from '../useBackHandler';
 import {
   ArchiveIcon,
   BellOffGlyph,
@@ -370,6 +371,16 @@ export function ThreadsScreen({
       }
     });
   }, [dragX, activeIndex, clearSwipe]);
+
+  // This is the app's home screen, so back only has work to do when a swipe tray is
+  // open. With nothing to close we return false and let Android exit the app.
+  useBackHandler(() => {
+    if (openId) {
+      closeSwipe();
+      return true;
+    }
+    return false;
+  });
 
   const onOpened = useCallback((id: string) => setOpenId(id), []);
 

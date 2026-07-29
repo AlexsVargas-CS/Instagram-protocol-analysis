@@ -19,6 +19,7 @@ import Animated, {
 import { colors, fonts, layout, radius } from '../theme';
 import { Message, Thread, User } from '../protocol';
 import { Monogram, TypingDots } from '../components';
+import { useBackHandler } from '../useBackHandler';
 import { formatTimestamp, threadName } from './ThreadsScreen';
 import {
   ArrowUpIcon,
@@ -211,6 +212,22 @@ export function ConversationScreen({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<{ name: string; text: string } | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+
+  // Back peels one layer at a time: the reaction bar, then a staged reply, then the
+  // conversation itself. Never returns false — the thread list is the screen that gets
+  // to hand the press back to Android.
+  useBackHandler(() => {
+    if (activeId) {
+      setActiveId(null);
+      return true;
+    }
+    if (replyTo) {
+      setReplyTo(null);
+      return true;
+    }
+    onBack();
+    return true;
+  });
 
   // Open pinned to the newest message, and follow the tail as messages arrive.
   useEffect(() => {
