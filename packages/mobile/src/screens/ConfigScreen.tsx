@@ -26,8 +26,8 @@ function CameraUnavailable({ onCancel }: { onCancel: () => void }) {
     <View style={styles.center}>
       <Text style={styles.title}>Camera unavailable</Text>
       <Text style={styles.message}>
-        QR scanning needs a newer build of the app. Rebuild the dev client (eas build) to enable
-        it, or enter the daemon details manually.
+        QR scanning needs a newer build of the app. Rebuild the dev client (eas build) to enable it,
+        or enter the daemon details manually.
       </Text>
       <TouchableOpacity style={styles.button} onPress={onCancel}>
         <Text style={styles.buttonText}>Back to manual entry</Text>
@@ -140,14 +140,14 @@ const styles = StyleSheet.create({
   },
   scanButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 18 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.hairlineStrong },
   dividerText: { color: colors.textDim, fontSize: 12, marginHorizontal: 12 },
   label: { color: colors.textDim, fontSize: 13, marginBottom: 6, marginTop: 14 },
   input: {
-    backgroundColor: colors.panel,
+    backgroundColor: colors.shelf,
     color: colors.text,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.hairlineStrong,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,

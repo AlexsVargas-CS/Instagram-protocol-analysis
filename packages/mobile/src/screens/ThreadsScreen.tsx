@@ -1,43 +1,54 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme';
+import React, { useCallback, useMemo, useState } from 'react';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  interpolateColor,
+  runOnJS,
+  SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { colors, density, fonts, layout, radius, spring } from '../theme';
 import { Thread, User } from '../protocol';
 import { ConnStatus } from '../rpc';
+import { Monogram, Toast, TypingDots } from '../components';
+import {
+  ArchiveIcon,
+  BellOffGlyph,
+  BellOffIcon,
+  DoubleCheckIcon,
+  GearIcon,
+  MagnifierIcon,
+} from '../icons';
 
 export function threadName(thread: Thread, meUserId: string | null): string {
   const others = (thread.users || []).filter((u) => u.pk !== meUserId);
-  const names = (others.length ? others : thread.users || []).map((u) => u.username).filter(Boolean);
+  const names = (others.length ? others : thread.users || [])
+    .map((u) => u.username)
+    .filter(Boolean);
   return names.length ? names.join(', ') : 'Conversation';
 }
 
-// Deterministic, desaturated tint per conversation so initials read as calm color-coding
-// rather than loud avatars. Dark tinted circle + a brighter letter of the same hue.
-const AVATAR_PALETTE = [
-  { bg: '#1f3b2e', fg: '#86c46f' }, // green
-  { bg: '#1d2f4a', fg: '#6fa3dd' }, // blue
-  { bg: '#332f4a', fg: '#a08fd6' }, // indigo
-  { bg: '#3a2a45', fg: '#c184d4' }, // purple
-  { bg: '#13393a', fg: '#5fc4c4' }, // teal
-  { bg: '#3a3320', fg: '#d4b46a' }, // amber
-  { bg: '#3a2626', fg: '#d68a8a' }, // rose
-];
-
-function avatarStyle(name: string): { bg: string; fg: string } {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+function initial(name: string): string {
+  const c = (name || '').replace(/[^a-z0-9]/gi, '').charAt(0);
+  return c ? c.toUpperCase() : '?';
 }
 
-function initial(name: string): string {
-  const c = (name || '').trim().charAt(0);
-  return c ? c.toUpperCase() : '?';
+// Group tiles carry 1–2 letters taken from the first letters of the name's words.
+function groupInitials(name: string): string {
+  const words = (name || '').split(/[\s,]+/).filter(Boolean);
+  const letters = words.slice(0, 2).map((w) => w.replace(/[^a-z0-9]/gi, '').charAt(0));
+  const out = letters.join('').toUpperCase();
+  return out || '?';
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Timestamps arrive as microseconds (Date.now() * 1000); normalize and render the
-// compact, scannable form the mockup uses: time today, "Yesterday", weekday, then date.
-function formatTimestamp(raw?: number): string {
+// compact, scannable form: time today, "Yesterday", weekday, then date.
+export function formatTimestamp(raw?: number): string {
   if (!raw) return '';
   const ms = raw > 1e14 ? Math.floor(raw / 1000) : raw;
   const then = new Date(ms);
@@ -58,25 +69,257 @@ function formatTimestamp(raw?: number): string {
   return `${then.getMonth() + 1}/${then.getDate()}`;
 }
 
-// A hand-drawn magnifier (no icon dependency in this Expo build) that tints when active.
-function SearchIcon({ active }: { active?: boolean }) {
-  const c = active ? colors.unread : colors.textDim;
+const OPEN = layout.swipeOpen; // -190
+const ROW_PAD = density.regular;
+
+// The row resists past the tray and past the closed edge instead of tracking the finger
+// 1:1 — the elastic half of the M3 Expressive swipe.
+function rubber(x: number): number {
+  'worklet';
+  if (x > 0) return Math.min(30, x * 0.26);
+  if (x < OPEN) return OPEN + (x - OPEN) * 0.3;
+  return x;
+}
+
+function GroupTile({
+  thread,
+  meUserId,
+  onPress,
+}: {
+  thread: Thread;
+  meUserId: string | null;
+  onPress: () => void;
+}) {
+  const name = threadName(thread, meUserId);
+  const unread = (thread.unreadCount || 0) > 0;
+  const scale = useSharedValue(1);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
   return (
-    <View style={styles.searchIcon}>
-      <View style={[styles.searchRing, { borderColor: c }]} />
-      <View style={[styles.searchHandle, { backgroundColor: c }]} />
-    </View>
+    <Pressable
+      onPress={onPress}
+      onPressIn={() => {
+        scale.value = withTiming(0.95, { duration: 160 });
+      }}
+      onPressOut={() => {
+        scale.value = withTiming(1, { duration: 160 });
+      }}
+    >
+      <Animated.View style={[styles.tileWrap, style]}>
+        <View style={[styles.tile, unread && styles.tileUnread]}>
+          <Text style={[styles.tileInitials, unread && styles.tileInitialsUnread]}>
+            {groupInitials(name)}
+          </Text>
+          {unread && (
+            <View style={styles.tileBadge}>
+              <Text style={styles.tileBadgeText}>
+                {thread.unreadCount > 99 ? '99+' : thread.unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
+        <Text style={[styles.tileName, unread && styles.tileNameUnread]} numberOfLines={1}>
+          {name}
+        </Text>
+      </Animated.View>
+    </Pressable>
   );
 }
 
-// Unread is "subtle by design": a soft-green pill carrying the count, nothing when read.
-// (The mockup's lone "new since opened" dot has no backing signal in the protocol yet,
-// so it's intentionally omitted rather than faked.)
-function UnreadBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
+function ThreadRow({
+  item,
+  index,
+  meUserId,
+  dragX,
+  activeIndex,
+  showTray,
+  isOpen,
+  onOpen,
+  onSwipeStart,
+  onOpened,
+  onClosed,
+  onRequestClose,
+  onMarkRead,
+  onToggleMute,
+  onArchive,
+}: {
+  item: Thread;
+  index: number;
+  meUserId: string | null;
+  dragX: SharedValue<number>;
+  activeIndex: SharedValue<number>;
+  showTray: boolean;
+  isOpen: boolean;
+  onOpen: (t: Thread) => void;
+  onSwipeStart: (id: string) => void;
+  onOpened: (id: string) => void;
+  onClosed: (id: string) => void;
+  onRequestClose: () => void;
+  onMarkRead: (t: Thread) => void;
+  onToggleMute: (t: Thread) => void;
+  onArchive: (t: Thread) => void;
+}) {
+  const base = useSharedValue(0);
+  const press = useSharedValue(0);
+
+  const name = threadName(item, meUserId);
+  const unread = item.unreadCount || 0;
+  const previewRaw = (item.lastMessage?.text || '').trim();
+  const preview = previewRaw || '[media]';
+  const time = formatTimestamp(item.lastActivityAt || item.lastMessage?.timestamp);
+  // A receipt only shows once the thread is fully read and the daemon has told us the
+  // other side saw it; until `lastSeenAt` is wired up this simply never renders.
+  const showReceipt =
+    unread === 0 &&
+    !!item.lastSeenAt &&
+    !!item.lastMessage &&
+    item.lastMessage.userId === meUserId &&
+    item.lastSeenAt >= item.lastMessage.timestamp;
+
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        // Let the FlatList win vertical drags, and don't steal small taps.
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-16, 16])
+        .onStart(() => {
+          // Dragging a row other than the open one starts it from closed. This lives in
+          // onStart, not onBegin, so a plain tap on a neighbour never disturbs the open row.
+          if (activeIndex.value !== index) dragX.value = 0;
+          activeIndex.value = index;
+          base.value = dragX.value;
+          runOnJS(onSwipeStart)(item.thread_id);
+        })
+        .onUpdate((e) => {
+          dragX.value = rubber(base.value + e.translationX);
+        })
+        .onEnd((e) => {
+          // A flick past ~450px/s decides on its own; otherwise distance does.
+          const open = e.velocityX < -450 ? true : e.velocityX > 450 ? false : dragX.value < -70;
+          if (open) runOnJS(onOpened)(item.thread_id);
+          // The one and only settle animation — seeded with the drag velocity so a flick
+          // overshoots slightly and eases back. The tray is torn down only once it lands.
+          dragX.value = withSpring(
+            open ? OPEN : 0,
+            { ...spring, velocity: e.velocityX },
+            (finished) => {
+              if (finished && !open) {
+                activeIndex.value = -1;
+                runOnJS(onClosed)(item.thread_id);
+              }
+            },
+          );
+        }),
+    [index, item.thread_id, activeIndex, dragX, base, onSwipeStart, onOpened, onClosed],
+  );
+
+  // Neighbours "stick" to the dragged row and reach after it, falling off with distance —
+  // the connected-interaction half of M3 Expressive.
+  const rowStyle = useAnimatedStyle(() => {
+    const ai = activeIndex.value;
+    let dx = 0;
+    if (ai >= 0) {
+      const diff = Math.abs(index - ai);
+      const follow = diff === 0 ? 1 : diff === 1 ? 0.15 : diff === 2 ? 0.06 : 0;
+      dx = dragX.value * follow;
+    }
+    const sliding = dx < -0.5 ? 1 : 0;
+    const lift = Math.max(press.value, sliding);
+    return {
+      transform: [{ translateX: dx }],
+      borderRadius: lift * radius.row,
+      backgroundColor: interpolateColor(press.value, [0, 1], [colors.bg, colors.shelf]),
+    };
+  });
+
   return (
-    <View style={styles.pill}>
-      <Text style={styles.pillText}>{count > 9 ? '9+' : count}</Text>
+    <View style={styles.rowHost}>
+      {/* Rendered only for the row being dragged — never for the neighbours that follow it. */}
+      {showTray && (
+        <View style={styles.tray}>
+          <Pressable
+            style={[styles.trayCell, { backgroundColor: colors.readFill }]}
+            onPress={() => onMarkRead(item)}
+          >
+            <DoubleCheckIcon size={17} color={colors.accent} strokeWidth={2} />
+            <Text style={[styles.trayLabel, { color: colors.accent }]}>READ</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.trayCell, { backgroundColor: colors.warnFill }]}
+            onPress={() => onToggleMute(item)}
+          >
+            <BellOffIcon size={17} color={colors.warnIcon} />
+            <Text style={[styles.trayLabel, { color: colors.warnLabel }]}>
+              {item.muted ? 'UNMUTE' : 'MUTE'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.trayCell, { backgroundColor: colors.dangerFill }]}
+            onPress={() => onArchive(item)}
+          >
+            <ArchiveIcon size={17} color={colors.dangerIcon} />
+            <Text style={[styles.trayLabel, { color: colors.dangerLabel }]}>FILE</Text>
+          </Pressable>
+        </View>
+      )}
+
+      <GestureDetector gesture={pan}>
+        <Animated.View style={rowStyle}>
+          <Pressable
+            style={styles.row}
+            onPressIn={() => {
+              press.value = withTiming(1, { duration: 140 });
+            }}
+            onPressOut={() => {
+              press.value = withTiming(0, { duration: 140 });
+            }}
+            // Tapping an open row closes it rather than opening the thread.
+            onPress={() => (isOpen ? onRequestClose() : onOpen(item))}
+          >
+            <View>
+              <Monogram letter={initial(name)} unread={unread > 0} />
+              {item.online && <View style={styles.presence} />}
+            </View>
+
+            <View style={styles.rowBody}>
+              <View style={styles.nameLine}>
+                <Text
+                  style={[styles.name, unread > 0 ? styles.nameUnread : null]}
+                  numberOfLines={1}
+                >
+                  {name}
+                </Text>
+                {item.muted && <BellOffGlyph />}
+              </View>
+
+              {item.typing ? (
+                <View style={styles.typingLine}>
+                  <TypingDots size={4} />
+                  <Text style={styles.typingText}>typing</Text>
+                </View>
+              ) : (
+                <Text
+                  style={[styles.preview, unread > 0 ? styles.previewUnread : null]}
+                  numberOfLines={1}
+                >
+                  {preview}
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.rowMeta}>
+              <Text style={[styles.time, unread > 0 ? styles.timeUnread : null]}>{time}</Text>
+              {unread > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
+                </View>
+              ) : showReceipt ? (
+                <DoubleCheckIcon size={15} color={colors.textDimmer} />
+              ) : null}
+            </View>
+          </Pressable>
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -87,268 +330,334 @@ export function ThreadsScreen({
   connStatus,
   onOpenThread,
   onReconfigure,
+  onMarkRead,
+  onToggleMute,
+  onArchive,
 }: {
   user: User | null;
   threads: Thread[];
   connStatus: ConnStatus;
   onOpenThread: (thread: Thread) => void;
   onReconfigure: () => void;
+  onMarkRead: (thread: Thread) => void;
+  onToggleMute: (thread: Thread) => void;
+  onArchive: (thread: Thread) => void;
 }) {
   const meUserId = user?.pk ?? null;
-  const [searching, setSearching] = useState(false);
-  const [query, setQuery] = useState('');
+  const dragX = useSharedValue(0);
+  const activeIndex = useSharedValue(-1);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const q = query.trim().toLowerCase();
-  const visible = q
-    ? threads.filter((t) => {
-        const n = threadName(t, meUserId).toLowerCase();
-        const p = (t.lastMessage?.text || '').toLowerCase();
-        return n.includes(q) || p.includes(q);
-      })
-    : threads;
+  const flash = useCallback((message: string) => {
+    setToast(message);
+    setTimeout(() => setToast((cur) => (cur === message ? null : cur)), 1800);
+  }, []);
+
+  const clearSwipe = useCallback(() => {
+    setOpenId(null);
+    setActiveRowId(null);
+  }, []);
+
+  // Close a row that isn't being dragged — a tap on the open row, or a tray action.
+  // The gesture path runs its own velocity-seeded spring and never comes through here.
+  const closeSwipe = useCallback(() => {
+    dragX.value = withSpring(0, spring, (finished) => {
+      if (finished) {
+        activeIndex.value = -1;
+        runOnJS(clearSwipe)();
+      }
+    });
+  }, [dragX, activeIndex, clearSwipe]);
+
+  const onOpened = useCallback((id: string) => setOpenId(id), []);
+
+  const onClosed = useCallback((id: string) => {
+    setOpenId((cur) => (cur === id ? null : cur));
+    setActiveRowId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  const groups = useMemo(
+    () =>
+      threads
+        .filter((t) => t.is_group)
+        .sort(
+          (a, b) =>
+            (b.unreadCount || 0) - (a.unreadCount || 0) ||
+            (b.lastActivityAt || 0) - (a.lastActivityAt || 0),
+        ),
+    [threads],
+  );
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.brand}>DMs</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => {
-              setSearching((s) => !s);
-              if (searching) setQuery('');
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <SearchIcon active={searching} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onReconfigure}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={styles.gearBtn}
-          >
-            <Text style={styles.gear}>⚙</Text>
-          </TouchableOpacity>
+      <View style={styles.shelf}>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Messages</Text>
+          <Pressable style={styles.settingsBtn} onPress={onReconfigure} hitSlop={8}>
+            <GearIcon />
+          </Pressable>
         </View>
+
+        {groups.length > 0 && (
+          <View style={styles.rail}>
+            <View style={styles.railHead}>
+              <Text style={styles.railLabel}>Most active groups</Text>
+              <Text style={styles.railAll}>All</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.railScroll}
+              contentContainerStyle={styles.railContent}
+            >
+              {groups.map((g) => (
+                <GroupTile
+                  key={g.thread_id}
+                  thread={g}
+                  meUserId={meUserId}
+                  onPress={() => onOpenThread(g)}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
-      {searching && (
-        <View style={styles.searchBar}>
-          <TextInput
-            style={styles.searchInput}
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search conversations"
-            placeholderTextColor={colors.textFaint}
-            autoFocus
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-          />
-        </View>
-      )}
+      <View style={styles.sheet}>
+        <FlatList
+          data={threads}
+          keyExtractor={(t) => t.thread_id}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              {connStatus === 'open' ? 'No conversations yet.' : 'Connecting…'}
+            </Text>
+          }
+          renderItem={({ item, index }) => (
+            <ThreadRow
+              item={item}
+              index={index}
+              meUserId={meUserId}
+              dragX={dragX}
+              activeIndex={activeIndex}
+              showTray={activeRowId === item.thread_id}
+              isOpen={openId === item.thread_id}
+              onOpen={onOpenThread}
+              onSwipeStart={setActiveRowId}
+              onOpened={onOpened}
+              onClosed={onClosed}
+              onRequestClose={closeSwipe}
+              onMarkRead={(t) => {
+                onMarkRead(t);
+                closeSwipe();
+                flash('Marked read');
+              }}
+              onToggleMute={(t) => {
+                onToggleMute(t);
+                closeSwipe();
+                flash(t.muted ? 'Unmuted' : 'Muted · no pushes');
+              }}
+              onArchive={(t) => {
+                onArchive(t);
+                closeSwipe();
+                flash('Filed away');
+              }}
+            />
+          )}
+        />
+      </View>
 
-      {/* Connection status lives off the list (per the design); only surface a slim,
-          unobtrusive strip when something's wrong. */}
-      {connStatus !== 'open' && (
-        <View style={styles.connStrip}>
-          <View style={styles.connDot} />
-          <Text style={styles.connStripText}>
-            {connStatus === 'connecting' ? 'Connecting…' : 'Offline'}
-          </Text>
-        </View>
-      )}
+      <Pressable style={styles.fab} onPress={() => flash('Search — coming soon')}>
+        <MagnifierIcon />
+      </Pressable>
 
-      <FlatList
-        data={visible}
-        keyExtractor={(t) => t.thread_id}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={
-          <Text style={styles.empty}>
-            {q
-              ? 'No matches.'
-              : connStatus === 'open'
-                ? 'No conversations yet.'
-                : 'Connecting…'}
-          </Text>
-        }
-        renderItem={({ item }) => {
-          const name = threadName(item, meUserId);
-          const av = avatarStyle(name);
-          const time = formatTimestamp(item.lastActivityAt || item.lastMessage?.timestamp);
-          const previewRaw = (item.lastMessage?.text || '').trim();
-          const preview = previewRaw || '[media]';
-          const isTag = !previewRaw || /^\[.+\]$/.test(previewRaw);
-          const unread = item.unreadCount || 0;
-          return (
-            <TouchableOpacity
-              style={styles.row}
-              activeOpacity={0.6}
-              onPress={() => onOpenThread(item)}
-            >
-              <View style={[styles.avatar, { backgroundColor: av.bg }]}>
-                <Text style={[styles.avatarText, { color: av.fg }]}>{initial(name)}</Text>
-              </View>
-              <View style={styles.rowBody}>
-                <View style={styles.rowLine}>
-                  <Text
-                    style={[styles.name, unread > 0 && styles.nameUnread]}
-                    numberOfLines={1}
-                  >
-                    {name}
-                  </Text>
-                  <Text style={styles.time}>{time}</Text>
-                </View>
-                <View style={styles.rowLine}>
-                  <Text
-                    style={[
-                      styles.preview,
-                      isTag && styles.previewTag,
-                      unread > 0 && styles.previewUnread,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {preview}
-                  </Text>
-                  <UnreadBadge count={unread} />
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        }}
-      />
+      <Toast message={toast} />
     </View>
   );
 }
 
-const AVATAR_SIZE = 44;
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+  container: { flex: 1, backgroundColor: colors.shelf },
 
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
-  },
-  brand: {
+  shelf: { paddingTop: 6, paddingHorizontal: 20, gap: 18 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  title: {
     color: colors.text,
-    fontSize: 26,
-    fontWeight: '700',
-    fontFamily: fonts.mono,
-    letterSpacing: 0.5,
+    fontFamily: fonts.grotesk,
+    fontSize: 27,
+    lineHeight: 27,
+    letterSpacing: -0.54,
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  gearBtn: { marginLeft: 20 },
-  gear: { color: colors.textDim, fontSize: 22 },
-
-  // Hand-drawn magnifier inside a 22×22 box.
-  searchIcon: { width: 22, height: 22 },
-  searchRing: {
-    position: 'absolute',
-    top: 3,
-    left: 3,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-  },
-  searchHandle: {
-    position: 'absolute',
-    top: 13,
-    left: 12,
-    width: 7,
-    height: 2,
-    borderRadius: 1,
-    transform: [{ rotate: '45deg' }],
-  },
-
-  searchBar: { paddingHorizontal: 20, paddingBottom: 12 },
-  searchInput: {
-    backgroundColor: colors.panel,
-    color: colors.text,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    fontFamily: fonts.mono,
-  },
-
-  connStrip: {
-    flexDirection: 'row',
+  settingsBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.settingsButton,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
+    justifyContent: 'center',
   },
-  connDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: colors.textFaint,
-    marginRight: 8,
-  },
-  connStripText: { color: colors.textDim, fontSize: 13, fontFamily: fonts.mono },
 
-  listContent: { paddingTop: 4, paddingBottom: 24 },
+  rail: { marginTop: -4 },
+  railHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  railLabel: {
+    color: colors.sectionLabel,
+    fontFamily: fonts.sansBold,
+    fontSize: 10.5,
+    letterSpacing: 1.575,
+    textTransform: 'uppercase',
+  },
+  railAll: { color: colors.accent, fontFamily: fonts.sansSemi, fontSize: 11.5 },
+  // Bled to the screen edges so tiles can run off the side.
+  railScroll: { marginHorizontal: -20 },
+  railContent: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 2, gap: 16 },
+
+  tileWrap: { alignItems: 'center', gap: 7 },
+  tile: {
+    width: layout.groupTile,
+    height: layout.groupTile,
+    borderRadius: layout.groupTile / 2,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tileUnread: { borderColor: colors.accent },
+  tileInitials: {
+    color: '#A9BAB6',
+    fontFamily: fonts.grotesk,
+    fontSize: 19,
+    letterSpacing: 0.38,
+  },
+  tileInitialsUnread: { color: colors.accent },
+  tileBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.accent,
+    borderWidth: 2.5,
+    borderColor: colors.shelf,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tileBadgeText: { color: colors.accentOn, fontFamily: fonts.sansBold, fontSize: 11 },
+  tileName: {
+    width: layout.groupTileLabel,
+    textAlign: 'center',
+    color: colors.textDim,
+    fontFamily: fonts.sansMedium,
+    fontSize: 11,
+  },
+  tileNameUnread: { color: colors.textStrong },
+
+  sheet: {
+    flex: 1,
+    marginTop: 16,
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
+    borderTopWidth: 1,
+    borderTopColor: colors.hairline,
+    overflow: 'hidden',
+    elevation: 18,
+  },
+  listContent: { paddingTop: 10, paddingBottom: 96 },
+
+  rowHost: { position: 'relative', justifyContent: 'center' },
+  tray: {
+    position: 'absolute',
+    top: 5,
+    bottom: 5,
+    right: 10,
+    width: layout.swipeTrayWidth,
+    borderRadius: radius.tray,
+    overflow: 'hidden',
+    flexDirection: 'row',
+  },
+  trayCell: { width: layout.swipeCell, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  trayLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 8.5,
+    letterSpacing: 0.34,
+    textTransform: 'uppercase',
+  },
 
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 13,
+    paddingVertical: ROW_PAD,
     paddingHorizontal: 20,
-    paddingVertical: 11,
   },
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
+  presence: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 11,
+    height: 11,
+    borderRadius: radius.full,
+    backgroundColor: colors.accent,
+    borderWidth: 2.5,
+    borderColor: colors.bg,
   },
-  avatarText: { fontSize: 17, fontWeight: '700', fontFamily: fonts.mono },
 
-  rowBody: { flex: 1, justifyContent: 'center' },
-  rowLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  rowBody: { flex: 1, gap: 3 },
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  name: { flexShrink: 1, color: colors.textStrong, fontFamily: fonts.groteskMedium, fontSize: 15 },
+  nameUnread: { color: colors.text, fontFamily: fonts.grotesk },
+  preview: { color: colors.textDim, fontFamily: fonts.sans, fontSize: 13, lineHeight: 17 },
+  previewUnread: {
+    color: colors.textUnreadPreview,
+    fontFamily: fonts.sansMedium,
   },
-  name: {
-    flex: 1,
-    marginRight: 10,
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '500',
-    fontFamily: fonts.mono,
-  },
-  nameUnread: { color: '#ffffff', fontWeight: '700' },
-  time: { color: colors.textFaint, fontSize: 12, fontFamily: fonts.mono },
+  typingLine: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 17 },
+  typingText: { color: colors.accent, fontFamily: fonts.sansMedium, fontSize: 13 },
 
-  preview: {
-    flex: 1,
-    marginRight: 10,
-    marginTop: 4,
-    color: colors.textDim,
-    fontSize: 13,
-    fontFamily: fonts.mono,
-  },
-  previewTag: { color: colors.textFaint },
-  previewUnread: { color: colors.text },
-
-  pill: {
-    marginTop: 4,
+  rowMeta: { alignItems: 'flex-end', gap: 7 },
+  time: { color: colors.textDimmer, fontFamily: fonts.sans, fontSize: 11 },
+  timeUnread: { color: colors.textStrong, fontFamily: fonts.sansSemi },
+  badge: {
     minWidth: 20,
     height: 20,
-    borderRadius: 10,
     paddingHorizontal: 6,
-    backgroundColor: colors.unread,
+    borderRadius: radius.full,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pillText: { color: colors.unreadInk, fontSize: 12, fontWeight: '700', fontFamily: fonts.mono },
+  badgeText: { color: colors.accentOn, fontFamily: fonts.sansBold, fontSize: 11 },
 
-  empty: { color: colors.textDim, textAlign: 'center', marginTop: 48, fontSize: 14 },
+  empty: {
+    color: colors.textDim,
+    fontFamily: fonts.sans,
+    textAlign: 'center',
+    marginTop: 48,
+    fontSize: 14,
+  },
+
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 22,
+    width: layout.fab,
+    height: layout.fab,
+    borderRadius: radius.fab,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 14,
+  },
 });

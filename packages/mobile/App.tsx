@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, SafeAreaView, StatusBar, StyleSheet, View, Text } from 'react-native';
-import { colors } from './src/theme';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFonts } from 'expo-font';
+import { colors, fontMap } from './src/theme';
 import { DaemonConfig, loadConfig, saveConfig, clearConfig } from './src/config';
 import { registerForPushNotificationsAsync, addNotificationTapListener } from './src/notifications';
 import { RpcClient, ConnStatus } from './src/rpc';
@@ -28,6 +30,13 @@ export default function App() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [messagesByThread, setMessagesByThread] = useState<Record<string, Message[]>>({});
   const [loadingMessages, setLoadingMessages] = useState(false);
+  // Mute and archive are local-only for now — the daemon has no mute list, and a plain
+  // refetch would otherwise resurrect an archived row. Keeping the ids outside `threads`
+  // means both survive a refetch.
+  const [mutedIds, setMutedIds] = useState<string[]>([]);
+  const [archivedIds, setArchivedIds] = useState<string[]>([]);
+
+  const [fontsLoaded] = useFonts(fontMap);
 
   const clientRef = useRef<RpcClient | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -168,20 +177,56 @@ export default function App() {
     [openThread, fetchThreads],
   );
 
-  // Send a message to the active thread with an optimistic local append. The daemon
-  // drops self-echoes, so the sent message won't arrive back via newMessage — no
-  // duplicate. A failed send is left in place for v1 (a reload reconciles).
-  const sendMessage = useCallback(
-    async (text: string) => {
-      const body = text.trim();
+  // Patch one message in place. Messages without an itemId fall back to the same
+  // timestamp-index key the conversation list uses, so both sides agree on identity.
+  const patchMessage = useCallback((threadId: string, id: string, patch: Partial<Message>) => {
+    setMessagesByThread((prev) => {
+      const list = prev[threadId];
+      if (!list) return prev;
+      return {
+        ...prev,
+        [threadId]: list.map((m, i) =>
+          (m.itemId ?? `${m.timestamp}-${i}`) === id ? { ...m, ...patch } : m,
+        ),
+      };
+    });
+  }, []);
+
+  // Push a message over the wire and reflect the outcome on the bubble. Unlike v1 the
+  // rejection is no longer swallowed — the optimistic message stays put and goes to
+  // `failed` so the row can offer a retry.
+  const deliver = useCallback(
+    async (threadId: string, id: string, body: string) => {
       const client = clientRef.current;
+      if (!client) {
+        patchMessage(threadId, id, { status: 'failed' });
+        return;
+      }
+      try {
+        await client.send('sendMessage', { thread_id: threadId, text: body });
+        patchMessage(threadId, id, { status: 'sent' });
+      } catch {
+        patchMessage(threadId, id, { status: 'failed' });
+      }
+    },
+    [patchMessage],
+  );
+
+  // Send to the active thread with an optimistic local append. The daemon drops
+  // self-echoes, so the sent message won't arrive back via newMessage — no duplicate.
+  const sendMessage = useCallback(
+    async (text: string, replyTo: { name: string; text: string } | null) => {
+      const body = text.trim();
       const threadId = activeThreadIdRef.current;
-      if (!body || !client || !threadId) return;
+      if (!body || !threadId) return;
+      const id = `local-${Date.now()}`;
       const optimistic: Message = {
         text: body,
         userId: user?.pk ?? '',
         timestamp: Date.now() * 1000,
-        itemId: `local-${Date.now()}`,
+        itemId: id,
+        status: 'sending',
+        ...(replyTo ? { replyTo } : {}),
       };
       setMessagesByThread((prev) => {
         const existing = prev[threadId] || [];
@@ -199,14 +244,64 @@ export default function App() {
         next.splice(idx, 1);
         return [updated, ...next];
       });
-      try {
-        await client.send('sendMessage', { thread_id: threadId, text: body });
-      } catch {
-        // transient; the message stays optimistically appended
-      }
+      await deliver(threadId, id, body);
     },
-    [user],
+    [user, deliver],
   );
+
+  const retryMessage = useCallback(
+    (id: string) => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId) return;
+      const list = messagesByThread[threadId] || [];
+      const found = list.find((m, i) => (m.itemId ?? `${m.timestamp}-${i}`) === id);
+      if (!found) return;
+      patchMessage(threadId, id, { status: 'sending' });
+      deliver(threadId, id, found.text);
+    },
+    [messagesByThread, patchMessage, deliver],
+  );
+
+  // Reactions are local-only: there's no reactMessage RPC yet, so tapping the same
+  // emoji twice clears it and nothing leaves the device.
+  const reactMessage = useCallback(
+    (id: string, emoji: string) => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId) return;
+      const list = messagesByThread[threadId] || [];
+      const found = list.find((m, i) => (m.itemId ?? `${m.timestamp}-${i}`) === id);
+      patchMessage(threadId, id, { reaction: found?.reaction === emoji ? undefined : emoji });
+    },
+    [messagesByThread, patchMessage],
+  );
+
+  const markThreadRead = useCallback((thread: Thread) => {
+    setThreads((prev) =>
+      prev.map((t) => (t.thread_id === thread.thread_id ? { ...t, unreadCount: 0 } : t)),
+    );
+    // The daemon's markRead needs the item to mark up to; without one there's nothing
+    // to report and the local clear stands on its own.
+    const itemId = thread.lastMessage?.itemId;
+    if (itemId) {
+      clientRef.current
+        ?.send('markRead', { thread_id: thread.thread_id, item_id: itemId })
+        .catch(() => {});
+    }
+  }, []);
+
+  const toggleMute = useCallback((thread: Thread) => {
+    setMutedIds((prev) =>
+      prev.includes(thread.thread_id)
+        ? prev.filter((id) => id !== thread.thread_id)
+        : [...prev, thread.thread_id],
+    );
+  }, []);
+
+  const archiveThread = useCallback((thread: Thread) => {
+    setArchivedIds((prev) =>
+      prev.includes(thread.thread_id) ? prev : [...prev, thread.thread_id],
+    );
+  }, []);
 
   // Deep-link: tapping a push (foreground/background or cold start) opens its thread.
   useEffect(() => {
@@ -244,12 +339,21 @@ export default function App() {
     });
   }, []);
 
+  // Local mute/archive folded onto the server's thread list.
+  const visibleThreads = useMemo(
+    () =>
+      threads
+        .filter((t) => !archivedIds.includes(t.thread_id))
+        .map((t) => (mutedIds.includes(t.thread_id) ? { ...t, muted: true } : t)),
+    [threads, archivedIds, mutedIds],
+  );
+
   const activeThread = activeThreadId
     ? (threads.find((t) => t.thread_id === activeThreadId) ?? null)
     : null;
 
   let body: React.ReactNode;
-  if (phase === 'loading') {
+  if (phase === 'loading' || !fontsLoaded) {
     body = (
       <View style={styles.center}>
         <Text style={styles.loadingText}>Loading…</Text>
@@ -266,25 +370,32 @@ export default function App() {
         loading={loadingMessages}
         onBack={() => setActiveThreadId(null)}
         onSend={sendMessage}
+        onReact={reactMessage}
+        onRetry={retryMessage}
       />
     );
   } else {
     body = (
       <ThreadsScreen
         user={user}
-        threads={threads}
+        threads={visibleThreads}
         connStatus={connStatus}
         onOpenThread={openThread}
         onReconfigure={onReconfigure}
+        onMarkRead={markThreadRead}
+        onToggleMute={toggleMute}
+        onArchive={archiveThread}
       />
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-      {body}
-    </SafeAreaView>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <SafeAreaView style={styles.root}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.shelf} />
+        {body}
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -302,10 +413,11 @@ function dedupeThreads(threads: Thread[]): Thread[] {
 const styles = StyleSheet.create({
   // RN core's SafeAreaView only insets on iOS (Android renders it as a plain View),
   // so Android needs the status bar height added back manually.
+  gestureRoot: { flex: 1, backgroundColor: colors.shelf },
   root: {
     flex: 1,
-    backgroundColor: colors.bg,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+    backgroundColor: colors.shelf,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: colors.textDim, fontSize: 16 },
