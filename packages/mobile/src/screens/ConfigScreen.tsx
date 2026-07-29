@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { colors } from '../theme';
 import { DaemonConfig } from '../config';
+import { useBackHandler } from '../useBackHandler';
 
 type ScannerProps = { onScanned: (cfg: DaemonConfig) => void; onCancel: () => void };
 
@@ -47,6 +48,17 @@ export function ConfigScreen({
   const [token, setToken] = useState(initial?.token ?? '');
   const [scanning, setScanning] = useState(false);
   const valid = address.trim().length > 0 && token.trim().length > 0;
+
+  // Back leaves the scanner the same way Cancel does. This screen is only ever reached
+  // without a stored config, so there's nothing behind it — pressing back from the form
+  // falls through to Android and exits.
+  useBackHandler(() => {
+    if (scanning) {
+      setScanning(false);
+      return true;
+    }
+    return false;
+  });
 
   // A scanned QR prefills the fields and returns to this screen so the user can
   // review the address before tapping Connect.
